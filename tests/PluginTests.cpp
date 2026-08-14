@@ -24,6 +24,11 @@ void section (const juce::String& name)
     std::cout << name << std::endl;
 }
 
+int processorPresetCount()
+{
+    return (int) xyb::getFactoryPresets().size();
+}
+
 float valueOf (juce::AudioProcessorValueTreeState& state, const char* id)
 {
     return state.getParameter (id)->getValue();
@@ -178,6 +183,125 @@ void testProcessingContract()
     processor.releaseResources();
 }
 
+void testEditorLifecycle()
+{
+    section ("editor lifecycle");
+
+    XYBassProcessor processor;
+    processor.setPlayConfigDetails (2, 2, 48000.0, 256);
+    processor.prepareToPlay (48000.0, 256);
+
+    auto* editor = processor.createEditorIfNeeded();
+    check (editor != nullptr, "the processor creates an editor");
+
+    if (editor != nullptr)
+    {
+        check (editor->getWidth() > 0 && editor->getHeight() > 0, "the editor opens with a usable size");
+
+        editor->setSize (520, 554);
+        editor->setSize (900, 960);
+
+        juce::AudioBuffer<float> buffer (2, 256);
+        juce::MidiBuffer midi;
+        buffer.clear();
+
+        for (int pass = 0; pass < 8; ++pass)
+            processor.processBlock (buffer, midi);
+
+        check (editor->getWidth() >= 520, "the editor honours its minimum width");
+    }
+
+    processor.editorBeingDeleted (editor);
+    delete editor;
+
+    auto* second = processor.createEditorIfNeeded();
+    check (second != nullptr, "the editor can be reopened");
+    processor.editorBeingDeleted (second);
+    delete second;
+
+    processor.releaseResources();
+}
+
+void testFactoryPresets()
+{
+    section ("factory preset behaviour");
+
+    const auto sampleRate = 48000.0;
+    const auto blockSize = 256;
+    const auto length = blockSize * 220;
+
+    juce::AudioBuffer<float> source (2, length);
+
+    for (int channel = 0; channel < 2; ++channel)
+    {
+        double phase = 0.0;
+
+        for (int i = 0; i < length; ++i)
+        {
+            const auto position = i % (int) (sampleRate * 0.5);
+            const auto seconds = (double) position / sampleRate;
+            const auto envelope = std::exp (-seconds * 3.0);
+
+            if (position == 0)
+                phase = 0.0;
+
+            phase += juce::MathConstants<double>::twoPi * 49.0 / sampleRate;
+            source.setSample (channel, i, 0.3f * (float) (envelope * std::sin (phase)));
+        }
+    }
+
+    double quietest = 1.0e9;
+    double loudest = 0.0;
+
+    for (int index = 0; index < processorPresetCount(); ++index)
+    {
+        XYBassProcessor processor;
+        processor.setPlayConfigDetails (2, 2, sampleRate, blockSize);
+        processor.prepareToPlay (sampleRate, blockSize);
+        processor.setCurrentProgram (index);
+
+        juce::AudioBuffer<float> buffer (source);
+        juce::MidiBuffer midi;
+        float* pointers[2] = { nullptr, nullptr };
+
+        for (int start = 0; start + blockSize <= length; start += blockSize)
+        {
+            for (int channel = 0; channel < 2; ++channel)
+                pointers[channel] = buffer.getWritePointer (channel) + start;
+
+            juce::AudioBuffer<float> view (pointers, 2, blockSize);
+            processor.processBlock (view, midi);
+        }
+
+        double peak = 0.0;
+        double sum = 0.0;
+        const auto analysed = length / 2;
+
+        for (int i = analysed; i < length; ++i)
+        {
+            const auto value = (double) buffer.getSample (0, i);
+            peak = juce::jmax (peak, std::abs (value));
+            sum += value * value;
+        }
+
+        const auto level = std::sqrt (sum / (double) (length - analysed));
+        quietest = juce::jmin (quietest, level);
+        loudest = juce::jmax (loudest, level);
+
+        check (peak < 1.05, juce::String ("preset ") + processor.getProgramName (index) + " respects the ceiling");
+        check (level > 0.01, juce::String ("preset ") + processor.getProgramName (index) + " produces output");
+        check (std::isfinite (level), juce::String ("preset ") + processor.getProgramName (index) + " stays finite");
+
+        processor.releaseResources();
+    }
+
+    std::cout << "        preset level spread = "
+              << juce::String (20.0 * std::log10 (loudest / juce::jmax (quietest, 1.0e-9)), 2) << std::endl;
+
+    check (20.0 * std::log10 (loudest / juce::jmax (quietest, 1.0e-9)) < 9.0,
+           "the factory presets sit within a comparable loudness range");
+}
+
 } // namespace
 
 int main()
@@ -189,6 +313,8 @@ int main()
     testStateRoundTrip();
     testPresetRecall();
     testProcessingContract();
+    testFactoryPresets();
+    testEditorLifecycle();
 
     std::cout << std::endl
               << (failures == 0 ? "PASSED " : "FAILED ")
