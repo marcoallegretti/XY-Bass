@@ -23,7 +23,7 @@ void BassEngine::prepare (double sampleRate, int maximumBlockSize, int numChanne
     spectralBalance.prepare (sampleRate, preparedChannels);
     autoGain.prepare (sampleRate);
 
-    const auto stages = sampleRate <= 50000.0 ? 2 : (sampleRate <= 100000.0 ? 1 : 0);
+    const auto stages = sampleRate <= 100000.0 ? 1 : 0;
     oversamplingShift = stages;
 
     oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
@@ -36,7 +36,7 @@ void BassEngine::prepare (double sampleRate, int maximumBlockSize, int numChanne
     dryBuffer.setSize (preparedChannels, preparedBlockSize);
     saturationBuffer.setSize (preparedChannels, preparedBlockSize);
     parallelBuffer.setSize (preparedChannels, preparedBlockSize);
-    controlBuffer.setSize (4, preparedBlockSize);
+    shaperControls.assign ((size_t) preparedBlockSize, ShaperControls {});
     monoBuffer.setSize (1, preparedBlockSize);
 
     dryDelay.prepare (preparedChannels, latencySamples + 8);
@@ -47,17 +47,12 @@ void BassEngine::prepare (double sampleRate, int maximumBlockSize, int numChanne
     parallelDelay.setDelay (latencySamples);
     bypassDelay.setDelay (latencySamples);
 
-    for (auto& filter : monoBoundaryFilter)
+    for (auto& channelFilters : subsonicFilter)
     {
-        filter.prepare (sampleRate);
-        filter.setQ (0.7071f);
-        filter.setCutoff (110.0f);
-    }
-
-    for (auto& filter : subsonicFilter)
-    {
-        filter.prepare (sampleRate);
-        filter.setHighPass (16.0f, 0.62f);
+        channelFilters[0].prepare (sampleRate);
+        channelFilters[0].setHighPass (16.0f, 0.5412f);
+        channelFilters[1].prepare (sampleRate);
+        channelFilters[1].setHighPass (16.0f, 1.3066f);
     }
 
     for (auto& blocker : outputDcBlocker)
@@ -91,9 +86,9 @@ void BassEngine::prepare (double sampleRate, int maximumBlockSize, int numChanne
     protectionControl.prepare (sampleRate, 90.0f);
     normalisationLevel.prepare (sampleRate, 45.0f);
     bassCrossoverControl.prepare (sampleRate, 220.0f);
-    monoBoundaryControl.prepare (sampleRate, 260.0f);
     subsonicControl.prepare (sampleRate, 300.0f);
     autoGainSmoother.prepare (sampleRate, 60.0f);
+    coreWeight.prepare (sampleRate, 250.0f);
     transientDepthControl.prepare (sampleRate, 120.0f);
 
     reset();
@@ -116,18 +111,16 @@ void BassEngine::reset()
     dryBuffer.clear();
     saturationBuffer.clear();
     parallelBuffer.clear();
-    controlBuffer.clear();
+    std::fill (shaperControls.begin(), shaperControls.end(), ShaperControls {});
     monoBuffer.clear();
 
     dryDelay.reset();
     parallelDelay.reset();
     bypassDelay.reset();
 
-    for (auto& filter : monoBoundaryFilter)
-        filter.reset();
-
-    for (auto& filter : subsonicFilter)
-        filter.reset();
+    for (auto& channelFilters : subsonicFilter)
+        for (auto& filter : channelFilters)
+            filter.reset();
 
     for (auto& blocker : outputDcBlocker)
         blocker.reset();
@@ -150,10 +143,10 @@ void BassEngine::reset()
     protectionControl.snapTo (0.0f);
     normalisationLevel.snapTo (kNormalisationReference);
     bassCrossoverControl.snapTo (150.0f);
-    monoBoundaryControl.snapTo (110.0f);
     subsonicControl.snapTo (16.0f);
     autoGainSmoother.snapTo (1.0f);
     transientDepthControl.snapTo (0.0f);
+    coreWeight.snapTo (0.0f);
 
     smoothedSubsonic = 16.0f;
 }
@@ -168,7 +161,6 @@ void BassEngine::updateControls (int numSamples)
     mixAmount.setTarget (juce::jlimit (0.0f, 1.0f, parameters.mix));
 
     bassCrossoverControl.setTarget (targets.bassCrossover);
-    monoBoundaryControl.setTarget (targets.monoBoundary);
     subsonicControl.setTarget (targets.subsonicCutoff);
     monoAmount.setTarget (targets.monoAmount);
 
@@ -177,13 +169,9 @@ void BassEngine::updateControls (int numSamples)
     clippingControl.setTarget (targets.clipping);
     protectionControl.setTarget (targets.fundamentalProtection);
     transientDepthControl.setTarget (targets.transientDepth);
+    coreWeight.setTarget (juce::jlimit (0.0f, 1.0f, -features.correlation));
 
     splitter.setCrossovers (bassCrossoverControl.advance (numSamples), kCharacterCrossover);
-
-    const auto boundary = monoBoundaryControl.advance (numSamples);
-
-    for (auto& filter : monoBoundaryFilter)
-        filter.setCutoff (boundary);
 
     const auto subsonic = subsonicControl.advance (numSamples);
 
@@ -191,8 +179,11 @@ void BassEngine::updateControls (int numSamples)
     {
         smoothedSubsonic = subsonic;
 
-        for (auto& filter : subsonicFilter)
-            filter.setHighPass (subsonic, 0.62f);
+        for (auto& channelFilters : subsonicFilter)
+        {
+            channelFilters[0].setHighPass (subsonic, 0.5412f);
+            channelFilters[1].setHighPass (subsonic, 1.3066f);
+        }
     }
 
     const auto selectivity = juce::jlimit (0.0f, 1.0f, features.tonal * (1.0f - 0.6f * features.percussive));
@@ -252,10 +243,6 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
     updateControls (numSamples);
 
     auto* mono = monoBuffer.getWritePointer (0);
-    auto* drive = controlBuffer.getWritePointer (0);
-    auto* asymmetry = controlBuffer.getWritePointer (1);
-    auto* clipping = controlBuffer.getWritePointer (2);
-    auto* postGain = controlBuffer.getWritePointer (3);
 
     const auto channelScale = 1.0f / (float) numChannels;
     const auto stereo = numChannels > 1;
@@ -275,29 +262,16 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
     for (int i = 0; i < numSamples; ++i)
     {
         const auto narrowing = monoAmount.next();
+        const auto polarity = coreWeight.next();
 
         float channelValue[2] = { 0.0f, 0.0f };
 
         for (int channel = 0; channel < numChannels; ++channel)
             channelValue[channel] = buffer.getReadPointer (channel)[i];
 
-        const auto sourceLowLeft = monoBoundaryFilter[0].processLowPass (channelValue[0]);
-        const auto sourceLowRight = stereo ? monoBoundaryFilter[1].processLowPass (channelValue[1])
-                                           : sourceLowLeft;
-
-        if (stereo)
-        {
-            const auto side = 0.5f * (sourceLowLeft - sourceLowRight) * narrowing;
-            channelValue[0] -= side;
-            channelValue[1] += side;
-        }
-
         float lowBand[2] = { 0.0f, 0.0f };
         float midBand[2] = { 0.0f, 0.0f };
         float characterBand[2] = { 0.0f, 0.0f };
-
-        float monoLow = 0.0f;
-        float monoInput = 0.0f;
 
         for (int channel = 0; channel < numChannels; ++channel)
         {
@@ -305,24 +279,33 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
             lowBand[channel] = bands.low;
             midBand[channel] = bands.mid;
             characterBand[channel] = bands.character;
-
-            monoLow += bands.low;
-            monoInput += channelValue[channel];
         }
 
-        monoLow *= channelScale;
-        monoInput *= channelScale;
+        const auto monoLow = stereo ? 0.5f * ((1.0f + polarity) * lowBand[0] + (1.0f - polarity) * lowBand[1])
+                                    : lowBand[0];
+        const auto monoInput = stereo ? 0.5f * ((1.0f + polarity) * channelValue[0]
+                                                + (1.0f - polarity) * channelValue[1])
+                                      : channelValue[0];
 
         analyser.pushMono (monoInput);
-        analyser.pushStereo (sourceLowLeft, sourceLowRight);
+        analyser.pushStereo (lowBand[0], stereo ? lowBand[1] : lowBand[0]);
 
-        const auto leftLevel = channelLowEnvelope[0].process (sourceLowLeft);
-        const auto rightLevel = stereo ? channelLowEnvelope[1].process (sourceLowRight) : leftLevel;
+        const auto leftLevel = channelLowEnvelope[0].process (lowBand[0]);
+        const auto rightLevel = stereo ? channelLowEnvelope[1].process (lowBand[1]) : leftLevel;
+
+        if (stereo)
+        {
+            const auto centre = 0.5f * (lowBand[0] + lowBand[1]);
+            const auto side = 0.5f * (lowBand[0] - lowBand[1]) * (1.0f - narrowing);
+            lowBand[0] = centre + side;
+            lowBand[1] = centre - side;
+        }
 
         mono[i] = monoInput;
 
         const auto fundamentalBand = translateEngine.extractFundamental (monoLow);
-        const auto subBus = subEngine.process (monoLow, fundamentalBand);
+        const auto subBus = subEngine.process (monoLow, fundamentalBand,
+                                              translateEngine.getFundamentalMagnitude());
         const auto harmonicBus = translateEngine.process (fundamentalBand, monoLow);
 
         const auto attack = transientFast.process (monoInput);
@@ -360,13 +343,12 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         const auto preGain = 1.0f / juce::jmax (normalisation, 1.0e-3f);
 
         const auto driveAmount = driveControl.next() * transientScale;
-        const auto driveValue = 0.05f + 3.6f * driveAmount * driveAmount;
+        auto& controls = shaperControls[(size_t) i];
 
-        drive[i] = driveValue;
-        asymmetry[i] = asymmetryControl.next();
-        clipping[i] = clippingControl.next() * transientScale;
-        postGain[i] = normalisation * (1.0f + 0.5f * driveAmount)
-                      / juce::jmax (std::tanh (driveValue), 1.0e-3f);
+        controls = makeShaperControls (driveAmount, asymmetryControl.next(),
+                                       clippingControl.next() * transientScale);
+        controls.outputGain = normalisation * (1.0f + 0.5f * driveAmount)
+                              / juce::jmax (std::tanh (controls.drive), 1.0e-3f);
 
         for (int channel = 0; channel < numChannels; ++channel)
             saturationBuffer.getWritePointer (channel)[i] *= preGain;
@@ -381,16 +363,19 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
                                             (size_t) numChannels, 0, (size_t) numSamples);
         auto upsampled = oversampler->processSamplesUp (block);
 
-        const auto oversampledSamples = (int) upsampled.getNumSamples();
+        const auto factor = 1 << oversamplingShift;
 
         for (int channel = 0; channel < numChannels; ++channel)
         {
             auto* data = upsampled.getChannelPointer ((size_t) channel);
 
-            for (int i = 0; i < oversampledSamples; ++i)
+            for (int base = 0; base < numSamples; ++base)
             {
-                const auto baseIndex = juce::jmin (numSamples - 1, i >> oversamplingShift);
-                data[i] = shapeSample (data[i], drive[baseIndex], asymmetry[baseIndex], clipping[baseIndex]);
+                const auto controls = shaperControls[(size_t) base];
+                auto* slice = data + (base << oversamplingShift);
+
+                for (int step = 0; step < factor; ++step)
+                    slice[step] = shapeSample (slice[step], controls);
             }
         }
 
@@ -415,10 +400,10 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
 
         for (int channel = 0; channel < numChannels; ++channel)
         {
-            auto value = saturationBuffer.getReadPointer (channel)[i] * postGain[i]
+            auto value = saturationBuffer.getReadPointer (channel)[i] * shaperControls[(size_t) i].outputGain
                          + parallelBuffer.getReadPointer (channel)[i];
 
-            value = subsonicFilter[(size_t) channel].process (value);
+            value = subsonicFilter[(size_t) channel][1].process (subsonicFilter[(size_t) channel][0].process (value));
             value = spectralBalance.process (channel, value);
             value = outputDcBlocker[(size_t) channel].process (value);
 

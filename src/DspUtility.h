@@ -187,6 +187,7 @@ public:
     }
 
     float getCutoff() const noexcept { return cutoff; }
+    float getNormalisedBandwidth() const noexcept { return twoR; }
 
 private:
     float sampleRate = 44100.0f;

@@ -52,6 +52,9 @@ void TranslateEngine::reset()
     narrowEnvelope.reset();
     wideEnvelope.reset();
     outputMeter.reset();
+    narrowMagnitude = 0.0f;
+    wideMagnitude = 0.0f;
+    wideBand = 0.0f;
     dcBlocker.reset();
 
     amountSmoother.snapTo (0.0f);
@@ -131,7 +134,22 @@ void TranslateEngine::updateBlock (int numSamples) noexcept
 
 float TranslateEngine::extractFundamental (float monoLow) noexcept
 {
-    return narrowExtractor.processBandPass (monoLow);
+    float low = 0.0f, band = 0.0f, high = 0.0f;
+    narrowExtractor.process (monoLow, low, band, high);
+
+    const auto scale = narrowExtractor.getNormalisedBandwidth();
+    const auto inPhase = band * scale;
+    const auto quadrature = low * scale;
+    narrowMagnitude = std::sqrt (inPhase * inPhase + quadrature * quadrature);
+
+    wideExtractor.process (monoLow, low, band, high);
+
+    const auto wideScale = wideExtractor.getNormalisedBandwidth();
+    wideBand = band * wideScale;
+    const auto wideQuadrature = low * wideScale;
+    wideMagnitude = std::sqrt (wideBand * wideBand + wideQuadrature * wideQuadrature);
+
+    return inPhase;
 }
 
 float TranslateEngine::process (float fundamentalBand, float monoLow) noexcept
@@ -149,8 +167,8 @@ float TranslateEngine::process (float fundamentalBand, float monoLow) noexcept
 
     if (amount <= 1.0e-5f)
     {
-        narrowEnvelope.process (fundamentalBand);
-        wideEnvelope.process (wideExtractor.processBandPass (monoLow));
+        narrowEnvelope.process (narrowMagnitude);
+        wideEnvelope.process (wideMagnitude);
         highPass.processHighPass (0.0f);
         lowPass.processLowPass (0.0f);
         dcBlocker.process (0.0f);
@@ -158,12 +176,14 @@ float TranslateEngine::process (float fundamentalBand, float monoLow) noexcept
         return 0.0f;
     }
 
-    const auto narrowLevel = narrowEnvelope.process (fundamentalBand);
-    const auto wideBand = wideExtractor.processBandPass (monoLow);
-    const auto wideLevel = wideEnvelope.process (wideBand);
+    const auto narrowLevel = narrowMagnitude;
+    const auto wideLevel = wideMagnitude;
 
-    const auto normalisedNarrow = juce::jlimit (-1.0f, 1.0f, fundamentalBand / juce::jmax (narrowLevel, 1.0e-5f));
-    const auto normalisedWide = juce::jlimit (-1.0f, 1.0f, wideBand / juce::jmax (wideLevel, 1.0e-5f));
+    narrowEnvelope.process (narrowLevel);
+    wideEnvelope.process (wideLevel);
+
+    const auto normalisedNarrow = juce::jlimit (-1.0f, 1.0f, fundamentalBand / juce::jmax (narrowLevel, 1.0e-6f));
+    const auto normalisedWide = juce::jlimit (-1.0f, 1.0f, wideBand / juce::jmax (wideLevel, 1.0e-6f));
 
     const auto squared = normalisedNarrow * normalisedNarrow;
     const auto cubed = squared * normalisedNarrow;
@@ -191,7 +211,7 @@ float TranslateEngine::process (float fundamentalBand, float monoLow) noexcept
     shaped = lowPass.processLowPass (shaped);
 
     outputMeter.process (shaped);
-    return shaped * 1.05f;
+    return shaped * 0.62f;
 }
 
 } // namespace xyb

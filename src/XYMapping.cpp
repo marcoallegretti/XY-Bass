@@ -19,7 +19,7 @@ EngineTargets computeTargets (float x, float y, const SourceFeatures& features)
     const auto translateSide = shapeAxis (x, 1.55f);
     const auto dirt = shapeAxis (y, 1.7f);
 
-    const auto restraint = 1.0f - 0.55f * features.mixLikeness;
+    const auto restraint = 1.0f - 0.42f * features.mixLikeness;
     const auto tonal = features.tonal;
     const auto weakFundamental = juce::jlimit (0.0f, 1.0f, (0.62f - features.fundamentalStrength) * 2.6f);
 
@@ -52,7 +52,7 @@ EngineTargets computeTargets (float x, float y, const SourceFeatures& features)
     targets.asymmetry = 0.18f * dirt * (0.45f + 0.55f * subSide);
     targets.clipping = juce::jlimit (0.0f, 1.0f, (y - 0.62f) * 2.63f) * restraint;
     targets.fundamentalProtection = juce::jlimit (0.0f, 0.8f, translateSide * (0.35f + 0.45f * dirt));
-    targets.transientDepth = juce::jlimit (0.0f, 0.90f, (0.92f - 0.26f * dirt)
+    targets.transientDepth = juce::jlimit (0.0f, 0.90f, (0.92f - 0.10f * dirt)
                                                             * (0.35f + 0.65f * features.percussive));
 
     targets.lowCompression = juce::jlimit (0.0f, 1.0f, 0.18f + 0.45f * dirt + 0.3f * subSide
@@ -62,12 +62,11 @@ EngineTargets computeTargets (float x, float y, const SourceFeatures& features)
     targets.fizzControl = juce::jlimit (0.0f, 1.0f, 0.75f * translateSide * (0.35f + 0.65f * dirt)
                                                        + 0.35f * features.mixLikeness);
 
-    targets.monoBoundary = juce::jlimit (60.0f, 170.0f, juce::jmap (pitchTrust, 105.0f, trackedPitch * 1.35f));
     targets.monoAmount = juce::jlimit (0.0f, 1.0f, 0.30f + 0.30f * subSide
                                                        + 0.45f * juce::jlimit (0.0f, 1.0f, 0.6f - features.correlation));
 
-    targets.bassCrossover = juce::jlimit (110.0f, 250.0f, juce::jmap (pitchTrust, 155.0f, trackedPitch * 1.9f));
-    targets.subsonicCutoff = juce::jlimit (14.0f, 28.0f, 14.0f + 12.0f * translateSide);
+    targets.bassCrossover = juce::jlimit (135.0f, 260.0f, juce::jmap (pitchTrust, 165.0f, trackedPitch * 2.2f));
+    targets.subsonicCutoff = juce::jlimit (14.0f, 26.0f, 14.0f + 11.0f * translateSide);
 
     return targets;
 }

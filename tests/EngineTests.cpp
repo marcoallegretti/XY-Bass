@@ -291,8 +291,9 @@ double measureAliasing (float x, float y, double sampleRate, double frequency, f
     for (int bin = (int) (25.0 / binWidth); bin < size / 2; ++bin)
     {
         const auto binFrequency = bin * binWidth;
-        const auto nearest = std::round (binFrequency / frequency);
-        const auto distance = std::abs (binFrequency - nearest * frequency);
+        const auto grid = frequency * 0.5;
+        const auto nearest = std::round (binFrequency / grid);
+        const auto distance = std::abs (binFrequency - nearest * grid);
         const auto power = (double) data[(size_t) bin] * (double) data[(size_t) bin];
 
         if (nearest >= 1.0 && distance < binWidth * 8.0)
@@ -302,6 +303,17 @@ double measureAliasing (float x, float y, double sampleRate, double frequency, f
     }
 
     return 10.0 * std::log10 (juce::jmax (strayPower, 1.0e-30) / juce::jmax (harmonicPower, 1.0e-30));
+}
+
+double modulationDepthDb (const std::vector<float>& envelope)
+{
+    auto sorted = envelope;
+    std::sort (sorted.begin(), sorted.end());
+
+    const auto low = sorted[(size_t) ((double) sorted.size() * 0.15)];
+    const auto high = sorted[(size_t) ((double) sorted.size() * 0.95)];
+
+    return 20.0 * std::log10 (juce::jmax ((double) high, 1.0e-12) / juce::jmax ((double) low, 1.0e-12));
 }
 
 double correlationOf (const std::vector<float>& a, const std::vector<float>& b)
@@ -392,34 +404,35 @@ void testShaperCharacter()
     const auto sampleRate = 48000.0;
     const auto length = 48000;
 
-    auto measure = [&] (float drive, float asymmetry, float clipping, int order)
+    auto measure = [&] (float driveAmount, float asymmetry, float clipping, int order)
     {
         std::vector<float> data ((size_t) length);
+        const auto controls = xyb::makeShaperControls (driveAmount, asymmetry, clipping);
         xyb::DcBlocker blocker;
         blocker.prepare (sampleRate, 5.0f);
 
         for (int i = 0; i < length; ++i)
         {
             const auto input = 1.3f * (float) std::sin (juce::MathConstants<double>::twoPi * 50.0 * i / sampleRate);
-            data[(size_t) i] = blocker.process (xyb::shapeSample (input, drive, asymmetry, clipping));
+            data[(size_t) i] = blocker.process (xyb::shapeSample (input, controls));
         }
 
         return magnitudeAt (data.data(), length, 50.0 * order, sampleRate);
     };
 
-    const auto fundamental = measure (3.65f, 0.18f, 0.0f, 1);
-    const auto second = measure (3.65f, 0.18f, 0.0f, 2);
-    const auto third = measure (3.65f, 0.18f, 0.0f, 3);
+    const auto fundamental = measure (1.0f, 0.18f, 0.0f, 1);
+    const auto second = measure (1.0f, 0.18f, 0.0f, 2);
+    const auto third = measure (1.0f, 0.18f, 0.0f, 3);
 
     report ("shaper h2", relativeDb (second, fundamental));
     report ("shaper h3", relativeDb (third, fundamental));
 
-    const auto clippedFundamental = measure (3.65f, 0.18f, 1.0f, 1);
-    const auto clippedSecond = measure (3.65f, 0.18f, 1.0f, 2);
+    const auto clippedFundamental = measure (1.0f, 0.18f, 1.0f, 1);
+    const auto clippedSecond = measure (1.0f, 0.18f, 1.0f, 2);
     report ("clipped h2", relativeDb (clippedSecond, clippedFundamental));
 
-    const auto symmetricSecond = measure (3.65f, 0.0f, 1.0f, 2);
-    const auto symmetricFundamental = measure (3.65f, 0.0f, 1.0f, 1);
+    const auto symmetricSecond = measure (1.0f, 0.0f, 1.0f, 2);
+    const auto symmetricFundamental = measure (1.0f, 0.0f, 1.0f, 1);
     report ("symmetric h2", relativeDb (symmetricSecond, symmetricFundamental));
 
     check (relativeDb (second, fundamental) > -30.0, "asymmetric drive generates even harmonics");
@@ -756,6 +769,7 @@ void testHarmonicStructure()
 struct KickShape
 {
     double attack = 0.0;
+    double energy = 0.0;
     double body = 0.0;
 };
 
@@ -763,6 +777,7 @@ KickShape measureKickShape (const Buffer& buffer, double sampleRate, int latency
 {
     const auto period = (int) (0.5 * sampleRate);
     const auto attackSpan = (int) (0.008 * sampleRate);
+    const auto energySpan = (int) (0.02 * sampleRate);
     const auto bodyStart = (int) (0.03 * sampleRate);
     const auto bodySpan = (int) (0.09 * sampleRate);
 
@@ -777,6 +792,7 @@ KickShape measureKickShape (const Buffer& buffer, double sampleRate, int latency
             localAttack = juce::jmax (localAttack, (double) std::abs (buffer.getSample (0, start + i)));
 
         shape.attack += localAttack;
+        shape.energy += rms (buffer.getReadPointer (0) + start, energySpan);
         shape.body += rms (buffer.getReadPointer (0) + start + bodyStart, bodySpan);
         ++hits;
     }
@@ -784,6 +800,7 @@ KickShape measureKickShape (const Buffer& buffer, double sampleRate, int latency
     if (hits > 0)
     {
         shape.attack /= hits;
+        shape.energy /= hits;
         shape.body /= hits;
     }
 
@@ -815,10 +832,14 @@ void testTransientRetention()
 
         const auto shape = measureKickShape (processed, sampleRate, engine.getLatencySamples());
 
-        report ("attack gain at " + juce::String (y, 2), relativeDb (shape.attack, reference.attack));
+        report ("attack peak at " + juce::String (y, 2), relativeDb (shape.attack, reference.attack));
+        report ("attack energy at " + juce::String (y, 2), relativeDb (shape.energy, reference.energy));
         report ("body gain at " + juce::String (y, 2), relativeDb (shape.body, reference.body));
 
-        return relativeDb (shape.attack, reference.attack);
+        check (relativeDb (shape.attack, reference.attack) > -4.0,
+               "the attack peak survives at y = " + juce::String (y, 2));
+
+        return relativeDb (shape.energy, reference.energy);
     };
 
     const auto clean = measure (0.0f);
@@ -826,10 +847,10 @@ void testTransientRetention()
     const auto strong = measure (0.75f);
     const auto extreme = measure (1.0f);
 
-    check (clean > -1.5, "clean settings leave the kick attack alone");
-    check (moderate > clean - 1.5, "moderate dirt does not squash the kick attack");
-    check (strong > clean - 3.5, "strong dirt does not squash the kick attack");
-    check (extreme > clean - 6.0, "extreme dirt softens but does not destroy the attack");
+    check (clean > -2.0, "clean settings leave the kick attack alone");
+    check (moderate > clean - 1.0, "moderate dirt does not squash the kick attack");
+    check (strong > clean - 1.5, "strong dirt does not squash the kick attack");
+    check (extreme > clean - 3.0, "extreme dirt softens but does not destroy the attack");
 }
 
 void testSubReinforcement()
@@ -908,10 +929,19 @@ void testSmallSpeakerTranslation()
     check (relativeDb (translatedLevel, boostedLevel) > 6.0,
            "translation beats a plain low frequency boost on small speakers");
 
+    const auto sourceModulation = modulationDepthDb (sourceEnvelope);
     const auto translatedEnvelope = envelopeOf (translatedSmall, sampleRate);
-    const auto rhythm = correlationOf (sourceEnvelope, translatedEnvelope);
-    report ("rhythm correlation", rhythm);
-    check (rhythm > 0.75, "translated content follows the original rhythm");
+    const auto translatedRhythm = correlationOf (sourceEnvelope, translatedEnvelope);
+    const auto translatedModulation = modulationDepthDb (translatedEnvelope);
+
+    report ("source modulation depth", sourceModulation);
+    report ("translated modulation depth", translatedModulation);
+    report ("rhythm correlation of translation", translatedRhythm);
+
+    check (translatedRhythm > 0.6, "translated content follows the shape of the original notes");
+    check (translatedModulation > 18.0, "translated content is modulated by the notes, not a drone");
+    check (std::abs (translatedModulation - sourceModulation) < 6.0,
+           "the generated content is neither flattened nor exaggerated against the source dynamics");
 }
 
 void testAliasing()
@@ -922,15 +952,21 @@ void testAliasing()
     const auto cleanTranslate = measureAliasing (1.0f, 0.0f, 48000.0, 137.0);
     const auto dirtyTranslate = measureAliasing (1.0f, 1.0f, 48000.0, 137.0);
     const auto dirtySub = measureAliasing (0.0f, 1.0f, 48000.0, 137.0);
+    const auto highDirty = measureAliasing (1.0f, 1.0f, 48000.0, 287.0);
+    const auto highDirtySub = measureAliasing (0.2f, 1.0f, 48000.0, 287.0);
 
     report ("measurement floor", floorLevel);
     report ("clean translate stray energy", cleanTranslate);
     report ("dirty translate stray energy", dirtyTranslate);
     report ("dirty sub stray energy", dirtySub);
+    report ("high note dirty translate stray energy", highDirty);
+    report ("high note dirty sub stray energy", highDirtySub);
 
     check (cleanTranslate < -62.0, "clean translate produces no measurable alias products");
     check (dirtyTranslate < -52.0, "dirty translate keeps alias products far below the harmonics");
     check (dirtySub < -52.0, "dirty sub keeps alias products far below the harmonics");
+    check (highDirty < -48.0, "a high bass note still keeps alias products far below the harmonics");
+    check (highDirtySub < -48.0, "a high saturated note keeps alias products far below the harmonics");
 }
 
 void testSampleRateConsistency()

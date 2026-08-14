@@ -14,6 +14,12 @@
 namespace xyb
 {
 
+inline float meterDisplay (float level, float floorDb) noexcept
+{
+    const auto decibels = juce::Decibels::gainToDecibels (level, floorDb);
+    return juce::jlimit (0.0f, 1.0f, (decibels - floorDb) / -floorDb);
+}
+
 struct EngineMeters
 {
     std::atomic<float> fundamental { 0.0f };
@@ -77,11 +83,11 @@ private:
 
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
 
-    juce::AudioBuffer<float> dryBuffer, saturationBuffer, parallelBuffer, controlBuffer, monoBuffer;
+    juce::AudioBuffer<float> dryBuffer, saturationBuffer, parallelBuffer, monoBuffer;
+    std::vector<ShaperControls> shaperControls;
     DelayBuffer dryDelay, parallelDelay, bypassDelay;
 
-    std::array<TptSvf, 2> monoBoundaryFilter;
-    std::array<Biquad, 2> subsonicFilter;
+    std::array<std::array<Biquad, 2>, 2> subsonicFilter;
     std::array<DcBlocker, 2> outputDcBlocker;
     std::array<EnvelopeFollower, 2> channelLowEnvelope;
 
@@ -92,8 +98,8 @@ private:
 
     SmoothedScalar inputGain, outputGain, mixAmount, monoAmount, driveControl;
     SmoothedScalar asymmetryControl, clippingControl, protectionControl, normalisationLevel;
-    SmoothedScalar bassCrossoverControl, monoBoundaryControl, subsonicControl;
-    SmoothedScalar autoGainSmoother, transientDepthControl;
+    SmoothedScalar bassCrossoverControl, subsonicControl;
+    SmoothedScalar autoGainSmoother, transientDepthControl, coreWeight;
 
     int preparedChannels = 2;
     int preparedBlockSize = 512;

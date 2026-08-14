@@ -27,7 +27,6 @@ struct EngineTargets
     float mudControl = 0.0f;
     float fizzControl = 0.0f;
 
-    float monoBoundary = 110.0f;
     float monoAmount = 0.0f;
 
     float bassCrossover = 150.0f;

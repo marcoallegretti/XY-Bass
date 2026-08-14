@@ -17,23 +17,46 @@ inline float softClip (float x, float knee = 0.66f) noexcept
     return x < 0.0f ? -limited : limited;
 }
 
-inline float shapeSample (float normalisedInput, float drive, float asymmetry, float clipping) noexcept
+struct ShaperControls
 {
-    const auto bounded = juce::jlimit (-12.0f, 12.0f, normalisedInput);
-    const auto bias = asymmetry * std::sqrt (drive);
-    const auto offset = std::tanh (bias);
+    float drive = 0.05f;
+    float bias = 0.0f;
+    float resting = 0.0f;
+    float scale = 1.0f;
+    float clipping = 0.0f;
+    float push = 1.0f;
+    float outputGain = 1.0f;
+};
 
-    auto shaped = std::tanh (drive * bounded + bias);
-    auto resting = offset;
+inline ShaperControls makeShaperControls (float driveAmount, float asymmetry, float clipping) noexcept
+{
+    ShaperControls controls;
+
+    controls.drive = 0.05f + 3.6f * driveAmount * driveAmount;
+    controls.bias = asymmetry * std::sqrt (controls.drive);
+    controls.clipping = clipping;
+    controls.push = 1.0f + 1.6f * clipping;
+
+    const auto offset = std::tanh (controls.bias);
+    controls.resting = offset;
 
     if (clipping > 0.0f)
-    {
-        const auto push = 1.0f + 1.6f * clipping;
-        shaped += clipping * (softClip (shaped * push) - shaped);
-        resting += clipping * (softClip (resting * push) - resting);
-    }
+        controls.resting += clipping * (softClip (offset * controls.push) - offset);
 
-    return (shaped - resting) / juce::jmax (1.0f - offset * offset, 0.25f);
+    controls.scale = 1.0f / juce::jmax (1.0f - offset * offset, 0.25f);
+
+    return controls;
+}
+
+inline float shapeSample (float normalisedInput, const ShaperControls& controls) noexcept
+{
+    const auto bounded = juce::jlimit (-12.0f, 12.0f, normalisedInput);
+    auto shaped = std::tanh (controls.drive * bounded + controls.bias);
+
+    if (controls.clipping > 0.0f)
+        shaped += controls.clipping * (softClip (shaped * controls.push) - shaped);
+
+    return (shaped - controls.resting) * controls.scale;
 }
 
 } // namespace xyb

@@ -21,6 +21,7 @@ public:
 
     float getHarmonicWeight (int index) const noexcept { return harmonicWeights[(size_t) index]; }
     float getOutputLevel() const noexcept { return outputMeter.getValue(); }
+    float getFundamentalMagnitude() const noexcept { return narrowMagnitude; }
 
 private:
     void refreshWeights (int numSamples) noexcept;
@@ -48,6 +49,9 @@ private:
     float compensationIncrement = 0.0f;
     float weightNormalisation = 1.0f;
     float normalisationIncrement = 0.0f;
+    float narrowMagnitude = 0.0f;
+    float wideMagnitude = 0.0f;
+    float wideBand = 0.0f;
 };
 
 } // namespace xyb

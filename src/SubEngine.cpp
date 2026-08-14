@@ -11,19 +11,12 @@ void SubEngine::prepare (double newSampleRate)
     reinforcementBand.setQ (0.9f);
     reinforcementBand.setCutoff (55.0f);
 
-    subharmonicShaper.prepare (newSampleRate);
-    subharmonicShaper.setQ (0.68f);
-    subharmonicShaper.setCutoff (48.0f);
-
     outputLimitBand.prepare (newSampleRate);
     outputLimitBand.setQ (0.7071f);
     outputLimitBand.setCutoff (130.0f);
 
     lowEnvelope.prepare (newSampleRate);
     lowEnvelope.setTimes (8.0f, 140.0f);
-
-    fundamentalEnvelope.prepare (newSampleRate);
-    fundamentalEnvelope.setTimes (4.0f, 90.0f);
 
     for (auto* meter : { &reinforcementMeter, &synthesisMeter })
     {
@@ -45,10 +38,8 @@ void SubEngine::prepare (double newSampleRate)
 void SubEngine::reset()
 {
     reinforcementBand.reset();
-    subharmonicShaper.reset();
     outputLimitBand.reset();
     lowEnvelope.reset();
-    fundamentalEnvelope.reset();
     reinforcementMeter.reset();
     synthesisMeter.reset();
     dcBlocker.reset();
@@ -60,9 +51,7 @@ void SubEngine::reset()
     oscillatorFrequency.snapTo (55.0f);
 
     phase = 0.0;
-    dividerState = 1.0f;
-    previousFundamental = 0.0f;
-    dividerHold = 0;
+    subharmonicPhase = 0.0;
     compressiveGain = 1.0f;
     compressiveIncrement = 0.0f;
     trackedFrequency = 55.0f;
@@ -87,20 +76,19 @@ void SubEngine::updateBlock (int numSamples) noexcept
     const auto envelope = juce::jmax (lowEnvelope.getValue(), 1.0e-5f);
     const auto target = juce::jlimit (0.35f, 1.6f, std::pow (0.16f / envelope, 0.35f));
     compressiveIncrement = (target - compressiveGain) / (float) juce::jmax (1, numSamples);
+
+    reinforcementBand.setCutoff (centre.advance (numSamples));
 }
 
-float SubEngine::process (float monoLow, float fundamentalBand) noexcept
+float SubEngine::process (float monoLow, float fundamentalBand, float fundamentalMagnitude) noexcept
 {
     const auto reinforcementAmount = reinforcement.next();
     const auto reconstructionAmount = reconstruction.next();
     const auto subharmonicAmount = subharmonic.next();
-    const auto centreHz = centre.next();
-
     compressiveGain += compressiveIncrement;
-    reinforcementBand.setCutoff (centreHz);
 
     const auto lowLevel = lowEnvelope.process (monoLow);
-    const auto fundamentalLevel = fundamentalEnvelope.process (fundamentalBand);
+    const auto fundamentalLevel = fundamentalMagnitude;
 
     const auto reinforced = reinforcementBand.processBandPass (monoLow)
                             * reinforcementAmount * 1.35f * compressiveGain;
@@ -126,27 +114,20 @@ float SubEngine::process (float monoLow, float fundamentalBand) noexcept
 
     if (subharmonicAmount > 1.0e-4f)
     {
-        const auto threshold = juce::jmax (fundamentalLevel * 0.18f, 1.0e-5f);
+        subharmonicPhase += 0.5 * (double) oscillatorFrequency.getCurrent() / (double) sampleRate;
 
-        if (dividerHold > 0)
-            --dividerHold;
+        if (subharmonicPhase >= 1.0)
+            subharmonicPhase -= 1.0;
 
-        if (dividerHold == 0 && previousFundamental <= threshold && fundamentalBand > threshold)
-        {
-            dividerState = -dividerState;
-            dividerHold = (int) (sampleRate * 0.45f / trackedFrequency);
-        }
-
-        previousFundamental = fundamentalBand;
-
-        subharmonicShaper.setCutoff (juce::jlimit (20.0f, 110.0f, trackedFrequency * 0.62f));
-        const auto smoothed = subharmonicShaper.processLowPass (dividerState);
-        synthesised += smoothed * fundamentalLevel * subharmonicAmount * 1.1f;
+        const auto oscillator = std::sin ((float) (subharmonicPhase * juce::MathConstants<double>::twoPi));
+        synthesised += oscillator * fundamentalLevel * subharmonicAmount * 0.9f;
     }
     else
     {
-        previousFundamental = fundamentalBand;
+        subharmonicPhase = 0.0;
     }
+
+    juce::ignoreUnused (fundamentalBand);
 
     const auto generated = dcBlocker.process (reinforced + synthesised);
     const auto bounded = outputLimitBand.processLowPass (generated);

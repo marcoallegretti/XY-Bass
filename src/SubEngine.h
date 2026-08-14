@@ -16,18 +16,16 @@ public:
 
     void updateBlock (int numSamples) noexcept;
 
-    float process (float monoLow, float fundamentalBand) noexcept;
+    float process (float monoLow, float fundamentalBand, float fundamentalMagnitude) noexcept;
 
     float getReinforcementLevel() const noexcept { return reinforcementMeter.getValue(); }
     float getSynthesisLevel() const noexcept { return synthesisMeter.getValue(); }
 
 private:
     TptSvf reinforcementBand;
-    TptSvf subharmonicShaper;
     TptSvf outputLimitBand;
 
     EnvelopeFollower lowEnvelope;
-    EnvelopeFollower fundamentalEnvelope;
     EnvelopeFollower reinforcementMeter;
     EnvelopeFollower synthesisMeter;
     DcBlocker dcBlocker;
@@ -35,11 +33,9 @@ private:
     SmoothedScalar reinforcement, reconstruction, subharmonic, centre, oscillatorFrequency;
 
     double phase = 0.0;
+    double subharmonicPhase = 0.0;
     float sampleRate = 44100.0f;
 
-    float dividerState = 1.0f;
-    float previousFundamental = 0.0f;
-    int dividerHold = 0;
 
     float compressiveGain = 1.0f;
     float compressiveIncrement = 0.0f;
