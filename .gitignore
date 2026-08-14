@@ -1,0 +1,13 @@
+build/
+cmake-build-*/
+out/
+.vs/
+.vscode/
+.idea/
+.claude/
+.ocr/
+.codex/
+CMakeUserPresets.json
+.DS_Store
+Thumbs.db
+*.md
