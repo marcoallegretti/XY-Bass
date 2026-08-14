@@ -17,7 +17,36 @@ FetchContent_Declare(
     DOWNLOAD_NO_PROGRESS FALSE
 )
 
-FetchContent_MakeAvailable(JUCE)
+FetchContent_Declare(
+    clap-juce-extensions
+    GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
+    GIT_TAG c1a5ad025f95d01e03267857fa8276ebeed16500
+    GIT_SUBMODULES_RECURSE TRUE
+)
+
+FetchContent_MakeAvailable(JUCE clap-juce-extensions)
+
+set(XYBASS_FORMATS Standalone VST3)
+
+if(APPLE)
+    list(APPEND XYBASS_FORMATS AU)
+endif()
+
+juce_add_plugin(XYBass
+    COMPANY_NAME "23DSP"
+    BUNDLE_ID com.23dsp.xybass
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    COPY_PLUGIN_AFTER_BUILD FALSE
+    PLUGIN_MANUFACTURER_CODE TDS3
+    PLUGIN_CODE XyBs
+    FORMATS ${XYBASS_FORMATS}
+    PRODUCT_NAME "XY Bass"
+    VST3_CATEGORIES Fx Dynamics Distortion
+)
 
 set(XYBASS_DSP_SOURCES
     src/BassEngine.cpp
@@ -28,6 +57,43 @@ set(XYBASS_DSP_SOURCES
     src/TranslateEngine.cpp
     src/XYMapping.cpp
 )
+
+target_sources(XYBass
+    PRIVATE
+        ${XYBASS_DSP_SOURCES}
+        src/PluginEditor.cpp
+        src/PluginProcessor.cpp
+        src/Presets.cpp
+        src/XYPad.cpp
+)
+
+target_compile_definitions(XYBass
+    PUBLIC
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_WEB_BROWSER=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+)
+
+target_link_libraries(XYBass
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_dsp
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+clap_juce_extensions_plugin(TARGET XYBass
+    CLAP_ID "com.23dsp.xybass"
+    CLAP_FEATURES audio-effect distortion mastering
+)
+
+if(MSVC)
+    target_compile_options(XYBass PRIVATE /utf-8)
+endif()
+
 enable_testing()
 
 juce_add_console_app(XYBassTests

@@ -1,0 +1,55 @@
+#pragma once
+
+#include "PluginProcessor.h"
+#include "XYPad.h"
+
+class XYBassLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    XYBassLookAndFeel();
+
+    void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height,
+                           float sliderPosProportional, float rotaryStartAngle,
+                           float rotaryEndAngle, juce::Slider&) override;
+
+    void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
+                           bool shouldDrawButtonAsHighlighted,
+                           bool shouldDrawButtonAsDown) override;
+};
+
+class XYBassEditor : public juce::AudioProcessorEditor,
+                     private juce::Timer
+{
+public:
+    explicit XYBassEditor (XYBassProcessor&);
+    ~XYBassEditor() override;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void timerCallback() override;
+    void showContextMenu();
+    void configureRotary (juce::Slider&, juce::Label&, const juce::String& text);
+
+    XYBassProcessor& processor;
+    XYBassLookAndFeel lookAndFeel;
+
+    XYPad pad;
+
+    juce::Slider inputSlider, mixSlider, outputSlider;
+    juce::Label inputLabel, mixLabel, outputLabel;
+    juce::ToggleButton autoGainButton { "AUTO GAIN" };
+    juce::ToggleButton deltaButton { "DELTA" };
+    juce::ToggleButton bypassButton { "BYPASS" };
+
+    using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
+
+    std::unique_ptr<SliderAttachment> inputAttachment, mixAttachment, outputAttachment;
+    std::unique_ptr<ButtonAttachment> autoGainAttachment, deltaAttachment, bypassAttachment;
+
+    juce::String readout;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (XYBassEditor)
+};

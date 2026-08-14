@@ -1,0 +1,246 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+using namespace xyb;
+
+namespace
+{
+juce::String formatPercentage (float value, int)
+{
+    return juce::String (juce::roundToInt (value)) + " %";
+}
+
+juce::String formatDecibels (float value, int)
+{
+    return juce::String (value, 1) + " dB";
+}
+
+juce::String formatPosition (float value, int)
+{
+    return juce::String (juce::roundToInt (value * 100.0f));
+}
+} // namespace
+
+juce::AudioProcessorValueTreeState::ParameterLayout XYBassProcessor::createLayout()
+{
+    using Range = juce::NormalisableRange<float>;
+
+    juce::AudioProcessorValueTreeState::ParameterLayout layout;
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ids::positionX, 1 }, "Sub / Translate", Range { 0.0f, 1.0f, 0.0001f }, 0.5f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatPosition)));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ids::positionY, 1 }, "Clean / Dirty", Range { 0.0f, 1.0f, 0.0001f }, 0.5f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatPosition)));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ids::input, 1 }, "Input", Range { -18.0f, 18.0f, 0.1f }, 0.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatDecibels)));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ids::output, 1 }, "Output", Range { -18.0f, 18.0f, 0.1f }, 0.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatDecibels)));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ids::mix, 1 }, "Mix", Range { 0.0f, 100.0f, 0.1f }, 100.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatPercentage)));
+
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::autoGain, 1 }, "Auto Gain", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::delta, 1 }, "Delta", false));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::bypass, 1 }, "Bypass", false));
+
+    return layout;
+}
+
+XYBassProcessor::XYBassProcessor()
+    : juce::AudioProcessor (BusesProperties()
+                                .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+                                .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      parameters (*this, nullptr, "XYBASS", createLayout())
+{
+    xParameter = dynamic_cast<juce::AudioParameterFloat*> (parameters.getParameter (ids::positionX));
+    yParameter = dynamic_cast<juce::AudioParameterFloat*> (parameters.getParameter (ids::positionY));
+    inputParameter = dynamic_cast<juce::AudioParameterFloat*> (parameters.getParameter (ids::input));
+    outputParameter = dynamic_cast<juce::AudioParameterFloat*> (parameters.getParameter (ids::output));
+    mixParameter = dynamic_cast<juce::AudioParameterFloat*> (parameters.getParameter (ids::mix));
+    autoGainParameter = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter (ids::autoGain));
+    deltaParameter = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter (ids::delta));
+    bypassParameter = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter (ids::bypass));
+}
+
+void XYBassProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+{
+    const auto channels = juce::jmax (1, getTotalNumOutputChannels());
+
+    engine.prepare (sampleRate, samplesPerBlock, channels);
+    setLatencySamples (engine.getLatencySamples());
+
+    bypassBuffer.setSize (channels, samplesPerBlock);
+    bypassBuffer.clear();
+
+    bypassRamp.reset (sampleRate, 0.02);
+    bypassRamp.setCurrentAndTargetValue (bypassParameter->get() ? 1.0f : 0.0f);
+
+    pullParameters();
+}
+
+void XYBassProcessor::releaseResources()
+{
+    engine.reset();
+}
+
+bool XYBassProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+{
+    const auto& output = layouts.getMainOutputChannelSet();
+
+    if (output != juce::AudioChannelSet::mono() && output != juce::AudioChannelSet::stereo())
+        return false;
+
+    return layouts.getMainInputChannelSet() == output;
+}
+
+void XYBassProcessor::pullParameters()
+{
+    xyb::BassEngine::Parameters values;
+    values.x = xParameter->get();
+    values.y = yParameter->get();
+    values.inputGainDb = inputParameter->get();
+    values.outputGainDb = outputParameter->get();
+    values.mix = mixParameter->get() * 0.01f;
+    values.autoGain = autoGainParameter->get();
+    values.delta = deltaParameter->get();
+
+    engine.setParameters (values);
+}
+
+void XYBassProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    const auto numChannels = juce::jmin (buffer.getNumChannels(), bypassBuffer.getNumChannels());
+    const auto numSamples = buffer.getNumSamples();
+
+    for (int channel = getTotalNumInputChannels(); channel < getTotalNumOutputChannels(); ++channel)
+        buffer.clear (channel, 0, numSamples);
+
+    pullParameters();
+
+    if (numChannels <= 0 || numSamples <= 0)
+        return;
+
+    for (int channel = 0; channel < numChannels; ++channel)
+        bypassBuffer.copyFrom (channel, 0, buffer, channel, 0, numSamples);
+
+    engine.processBypassed (bypassBuffer);
+    engine.process (buffer);
+
+    bypassRamp.setTargetValue (bypassParameter->get() ? 1.0f : 0.0f);
+
+    if (bypassRamp.isSmoothing() || bypassRamp.getCurrentValue() > 0.0f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto blend = bypassRamp.getNextValue();
+
+            for (int channel = 0; channel < numChannels; ++channel)
+            {
+                auto* data = buffer.getWritePointer (channel);
+                data[i] += (bypassBuffer.getReadPointer (channel)[i] - data[i]) * blend;
+            }
+        }
+    }
+}
+
+void XYBassProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    juce::ScopedNoDenormals noDenormals;
+    engine.processBypassed (buffer);
+}
+
+int XYBassProcessor::getNumPrograms()
+{
+    return (int) getFactoryPresets().size();
+}
+
+int XYBassProcessor::getCurrentProgram()
+{
+    return currentProgram;
+}
+
+void XYBassProcessor::setCurrentProgram (int index)
+{
+    const auto& presets = getFactoryPresets();
+
+    if (! juce::isPositiveAndBelow (index, (int) presets.size()))
+        return;
+
+    currentProgram = index;
+    const auto& preset = presets[(size_t) index];
+
+    xParameter->beginChangeGesture();
+    xParameter->setValueNotifyingHost (preset.x);
+    xParameter->endChangeGesture();
+
+    yParameter->beginChangeGesture();
+    yParameter->setValueNotifyingHost (preset.y);
+    yParameter->endChangeGesture();
+
+    mixParameter->beginChangeGesture();
+    mixParameter->setValueNotifyingHost (mixParameter->convertTo0to1 (preset.mix));
+    mixParameter->endChangeGesture();
+
+    outputParameter->beginChangeGesture();
+    outputParameter->setValueNotifyingHost (outputParameter->convertTo0to1 (preset.output));
+    outputParameter->endChangeGesture();
+
+    autoGainParameter->beginChangeGesture();
+    autoGainParameter->setValueNotifyingHost (preset.autoGain ? 1.0f : 0.0f);
+    autoGainParameter->endChangeGesture();
+}
+
+const juce::String XYBassProcessor::getProgramName (int index)
+{
+    const auto& presets = getFactoryPresets();
+
+    if (! juce::isPositiveAndBelow (index, (int) presets.size()))
+        return {};
+
+    return presets[(size_t) index].name;
+}
+
+void XYBassProcessor::changeProgramName (int, const juce::String&)
+{
+}
+
+void XYBassProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    auto state = parameters.copyState();
+    state.setProperty ("program", currentProgram, nullptr);
+
+    if (auto xml = state.createXml())
+        copyXmlToBinary (*xml, destData);
+}
+
+void XYBassProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+
+    if (xml == nullptr || ! xml->hasTagName (parameters.state.getType()))
+        return;
+
+    auto state = juce::ValueTree::fromXml (*xml);
+    currentProgram = (int) state.getProperty ("program", 0);
+    parameters.replaceState (state);
+}
+
+juce::AudioProcessorEditor* XYBassProcessor::createEditor()
+{
+    return new XYBassEditor (*this);
+}
+
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new XYBassProcessor();
+}
