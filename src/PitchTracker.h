@@ -55,7 +55,8 @@ private:
     float stability = 0.0f;
     float smoothedFrequency = 0.0f;
     float deviation = 0.0f;
-    float lastValidFrequency = 0.0f;
+    float pendingFrequency = 0.0f;
+    int pendingCount = 0;
     float silenceLevel = 0.0f;
 };
 

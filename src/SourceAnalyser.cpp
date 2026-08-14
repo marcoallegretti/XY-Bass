@@ -155,8 +155,9 @@ void SourceAnalyser::finishBlock (int numSamples) noexcept
     features.correlation = correlationSmoother.advance (numSamples);
 
     const auto spread = juce::jlimit (0.0f, 1.0f, (character / total - 0.10f) * 4.0f);
-    const auto vagueness = 1.0f - features.pitchConfidence * features.pitchStability;
-    mixSmoother.setTarget (juce::jlimit (0.0f, 1.0f, spread * (0.45f + 0.55f * vagueness)));
+    const auto vagueness = juce::jlimit (0.0f, 1.0f,
+                                         (1.0f - features.pitchConfidence * features.pitchStability) * 1.4f);
+    mixSmoother.setTarget (juce::jlimit (0.0f, 1.0f, spread * (0.2f + 0.8f * vagueness)));
     features.mixLikeness = mixSmoother.advance (numSamples);
 
     const auto crestTerm = juce::jlimit (0.0f, 1.0f, (features.crest - 3.5f) * 0.14f);

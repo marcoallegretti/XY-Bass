@@ -30,7 +30,7 @@ void PitchTracker::prepare (double sampleRate)
     maximumLag = (int) std::ceil (workingRate / minimumFrequency);
 
     windowLength = juce::jmax (256, (int) std::round (workingRate * 0.128));
-    hopLength = juce::jmax (32, windowLength / 4);
+    hopLength = juce::jmax (24, windowLength / 8);
 
     historySize = juce::nextPowerOfTwo (windowLength + maximumLag + hopLength + 4);
 
@@ -66,7 +66,8 @@ void PitchTracker::reset()
     stability = 0.0f;
     smoothedFrequency = 0.0f;
     deviation = 0.0f;
-    lastValidFrequency = 0.0f;
+    pendingFrequency = 0.0f;
+    pendingCount = 0;
     silenceLevel = 0.0f;
 }
 
@@ -213,34 +214,49 @@ void PitchTracker::finishFrame() noexcept
     const auto refined = refineLag (bestLag);
     const auto candidate = (float) workingRate / juce::jmax (refined, 1.0f);
     const auto clarity = juce::jlimit (0.0f, 1.0f, 1.0f - normalised[(size_t) bestLag]);
-
     const auto levelGate = juce::jlimit (0.0f, 1.0f, (silenceLevel - 0.0004f) * 400.0f);
+
     auto frameConfidence = clarity * levelGate;
 
     if (candidate < minimumFrequency || candidate > maximumFrequency)
         frameConfidence *= 0.25f;
 
-    if (lastValidFrequency > 0.0f)
-    {
-        const auto ratio = candidate / lastValidFrequency;
-        const auto octaveJump = std::abs (std::log2 (juce::jmax (ratio, kTiny)));
+    auto accepted = frameConfidence > 0.35f;
 
-        if (octaveJump > 0.35f)
-            frameConfidence *= juce::jlimit (0.25f, 1.0f, 1.0f - (octaveJump - 0.35f));
+    if (frequency > 0.0f && frameConfidence > 0.1f)
+    {
+        const auto jump = std::abs (std::log2 (juce::jmax (candidate / frequency, kTiny)));
+
+        if (jump > 0.30f)
+        {
+            const auto continuesPending = pendingFrequency > 0.0f
+                                          && std::abs (std::log2 (juce::jmax (candidate / pendingFrequency, kTiny))) < 0.06f;
+
+            pendingCount = continuesPending ? pendingCount + 1 : 1;
+            pendingFrequency = candidate;
+
+            if (pendingCount < 3)
+            {
+                frameConfidence *= 0.35f;
+                accepted = false;
+            }
+        }
+        else
+        {
+            pendingCount = 0;
+            pendingFrequency = 0.0f;
+        }
     }
 
     const auto rise = frameConfidence > confidence ? 0.55f : 0.25f;
     confidence += (frameConfidence - confidence) * rise;
 
-    if (frameConfidence > 0.35f)
+    if (accepted)
     {
-        const auto glide = frequency > 0.0f ? 0.5f : 1.0f;
+        const auto glide = frequency > 0.0f && pendingCount == 0 ? 0.55f : 1.0f;
         frequency += (candidate - frequency) * glide;
-        lastValidFrequency = frequency;
-    }
-    else if (frequency > 0.0f)
-    {
-        frequency += (candidate - frequency) * 0.08f;
+        pendingCount = 0;
+        pendingFrequency = 0.0f;
     }
 
     if (smoothedFrequency <= 0.0f)
