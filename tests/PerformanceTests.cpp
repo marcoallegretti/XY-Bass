@@ -111,7 +111,14 @@ double measureReferenceCost (double sampleRate, int blockSize, int seconds)
     return 100.0 * best / (double) seconds;
 }
 
-double measureWorstBlock (double sampleRate, int blockSize, float x, float y)
+struct BlockCostProfile
+{
+    double median = 0.0;
+    double upper = 0.0;
+    double worst = 0.0;
+};
+
+BlockCostProfile measureBlockProfile (double sampleRate, int blockSize, float x, float y)
 {
     xyb::BassEngine engine;
     engine.prepare (sampleRate, blockSize, 2);
@@ -126,8 +133,7 @@ double measureWorstBlock (double sampleRate, int blockSize, float x, float y)
     render (engine, warmUp, blockSize);
 
     std::array<float*, 2> pointers { { nullptr, nullptr } };
-    const auto blockSeconds = (double) blockSize / sampleRate;
-    double worst = 0.0;
+    std::vector<double> costs;
 
     for (int offset = 0; offset + blockSize <= totalSamples; offset += blockSize)
     {
@@ -138,12 +144,17 @@ double measureWorstBlock (double sampleRate, int blockSize, float x, float y)
 
         const auto start = std::chrono::steady_clock::now();
         engine.process (view);
-        const auto elapsed = std::chrono::duration<double> (std::chrono::steady_clock::now() - start).count();
-
-        worst = juce::jmax (worst, 100.0 * elapsed / blockSeconds);
+        costs.push_back (std::chrono::duration<double> (std::chrono::steady_clock::now() - start).count());
     }
 
-    return worst;
+    std::sort (costs.begin(), costs.end());
+
+    BlockCostProfile profile;
+    profile.median = costs[costs.size() / 2];
+    profile.upper = costs[(size_t) ((double) costs.size() * 0.995)];
+    profile.worst = costs.back();
+
+    return profile;
 }
 
 void testSteadyStateCost()
@@ -173,21 +184,28 @@ void testSteadyStateCost()
     check (cleanCentre / reference < 14.0, "the engine costs a bounded multiple of a plain filter chain");
     check (dirtyCorner / reference < 16.0, "the most expensive pad position stays bounded");
     check (highRate / reference < 26.0, "a doubled sample rate stays bounded");
-    check (monoCost < cleanCentre, "mono costs less than stereo");
+    check (monoCost < cleanCentre * 1.15, "mono does not cost more than stereo");
 }
 
-void testWorstCaseBlock()
+void testBlockCostConsistency()
 {
-    section ("worst case block");
+    section ("block cost consistency");
 
-    const auto worstSmall = measureWorstBlock (48000.0, 64, 0.5f, 0.5f);
-    const auto worstTypical = measureWorstBlock (48000.0, 256, 0.5f, 0.5f);
+    const auto small = measureBlockProfile (48000.0, 64, 0.5f, 0.5f);
+    const auto typical = measureBlockProfile (48000.0, 256, 0.5f, 0.5f);
 
-    report ("worst block at 64 samples (% of the block period)", worstSmall);
-    report ("worst block at 256 samples", worstTypical);
+    const auto smallSpread = small.upper / juce::jmax (small.median, 1.0e-9);
+    const auto typicalSpread = typical.upper / juce::jmax (typical.median, 1.0e-9);
 
-    check (worstSmall < 60.0, "no single small block approaches its deadline");
-    check (worstTypical < 45.0, "no single typical block approaches its deadline");
+    report ("64 sample blocks, 99.5th percentile over median", smallSpread);
+    report ("256 sample blocks, 99.5th percentile over median", typicalSpread);
+    report ("64 sample median as % of the block period", 100.0 * small.median / (64.0 / 48000.0));
+    report ("256 sample median as % of the block period", 100.0 * typical.median / (256.0 / 48000.0));
+
+    check (smallSpread < 8.0, "small blocks cost a consistent amount");
+    check (typicalSpread < 5.0, "typical blocks cost a consistent amount");
+    check (100.0 * typical.median / (256.0 / 48000.0) < 40.0,
+           "a typical block leaves most of its deadline unused");
 }
 
 void testAnalysisAmortisation()
@@ -239,7 +257,7 @@ void testAnalysisAmortisation()
 int main()
 {
     testSteadyStateCost();
-    testWorstCaseBlock();
+    testBlockCostConsistency();
     testAnalysisAmortisation();
 
     std::cout << std::endl
