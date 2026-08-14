@@ -127,3 +127,41 @@ if(MSVC)
 endif()
 
 add_test(NAME xy-bass-engine COMMAND XYBassTests)
+
+juce_add_console_app(XYBassPluginTests
+    PRODUCT_NAME "XY Bass Plugin Tests"
+)
+
+target_sources(XYBassPluginTests
+    PRIVATE
+        ${XYBASS_DSP_SOURCES}
+        src/PluginEditor.cpp
+        src/PluginProcessor.cpp
+        src/Presets.cpp
+        src/XYPad.cpp
+        tests/PluginTests.cpp
+)
+
+target_include_directories(XYBassPluginTests PRIVATE src)
+
+target_compile_definitions(XYBassPluginTests
+    PRIVATE
+        $<TARGET_PROPERTY:XYBass,INTERFACE_COMPILE_DEFINITIONS>
+        JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+)
+
+target_link_libraries(XYBassPluginTests
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+
+if(MSVC)
+    target_compile_options(XYBassPluginTests PRIVATE /utf-8)
+endif()
+
+add_test(NAME xy-bass-plugin COMMAND XYBassPluginTests)
