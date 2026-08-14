@@ -22,6 +22,9 @@ public:
     void mouseDrag (const juce::MouseEvent& event) override;
     void mouseUp (const juce::MouseEvent& event) override;
     void mouseDoubleClick (const juce::MouseEvent& event) override;
+    bool keyPressed (const juce::KeyPress& key) override;
+    void focusGained (FocusChangeType) override;
+    void focusLost (FocusChangeType) override;
 
     std::function<void()> onContextMenu;
 
@@ -54,6 +57,8 @@ private:
     float smoothedDrive = 0.0f;
     float smoothedOutput = 0.0f;
     std::array<float, 4> smoothedWeights { { 0.0f, 0.0f, 0.0f, 0.0f } };
+
+    bool focused = false;
 
     juce::Point<float> dragAnchor;
     juce::Point<float> dragOrigin;

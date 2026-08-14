@@ -27,7 +27,12 @@ XYPad::XYPad (juce::RangedAudioParameter& xParameter,
 {
     attachmentX.sendInitialUpdate();
     attachmentY.sendInitialUpdate();
-    setWantsKeyboardFocus (false);
+    setWantsKeyboardFocus (true);
+    setTitle ("Bass character pad");
+    setDescription ("Horizontal axis moves between sub weight and small speaker translation. "
+                    "Vertical axis moves between clean and dirty processing.");
+    setHelpText ("Drag to set the bass character. Arrow keys nudge, shift for fine steps, "
+                 "double click returns to the centre.");
     startTimerHz (30);
 }
 
@@ -125,18 +130,18 @@ void XYPad::paintField (juce::Graphics& g, juce::Rectangle<float> area)
                             area.getY(), area.getBottom());
     }
 
-    g.setColour (juce::Colours::white.withAlpha (0.10f));
+    g.setColour (juce::Colours::white.withAlpha (focused ? 0.28f : 0.10f));
     g.drawRoundedRectangle (area, 8.0f, 1.0f);
 }
 
 void XYPad::paintWaves (juce::Graphics& g, juce::Rectangle<float> area)
 {
-    const auto energy = juce::jlimit (0.0f, 1.0f, smoothedLowLevel * 6.0f);
+    const auto energy = xyb::meterDisplay (smoothedLowLevel, -42.0f);
 
     if (energy < 0.01f)
         return;
 
-    const auto generated = juce::jlimit (0.0f, 1.0f, smoothedSubLevel * 8.0f);
+    const auto generated = xyb::meterDisplay (smoothedSubLevel, -48.0f);
     const auto cycles = juce::jlimit (0.7f, 6.0f, smoothedFundamental / 22.0f);
     const auto amplitude = area.getHeight() * 0.14f * energy;
 
@@ -171,7 +176,7 @@ void XYPad::paintWaves (juce::Graphics& g, juce::Rectangle<float> area)
 
 void XYPad::paintHarmonics (juce::Graphics& g, juce::Rectangle<float> area)
 {
-    const auto level = juce::jlimit (0.0f, 1.0f, smoothedHarmonicLevel * 9.0f);
+    const auto level = xyb::meterDisplay (smoothedHarmonicLevel, -54.0f);
 
     if (level < 0.01f || smoothedFundamental < 20.0f)
         return;
@@ -251,7 +256,7 @@ void XYPad::paintLabels (juce::Graphics& g, juce::Rectangle<float> area)
 void XYPad::paintPuck (juce::Graphics& g, juce::Rectangle<float> area)
 {
     const auto centre = positionToPoint (valueX, valueY);
-    const auto level = juce::jlimit (0.0f, 1.0f, smoothedOutput * 4.0f);
+    const auto level = xyb::meterDisplay (smoothedOutput, -42.0f);
 
     g.setColour (juce::Colours::white.withAlpha (0.10f));
     g.drawHorizontalLine (juce::roundToInt (centre.y), area.getX(), area.getRight());
@@ -272,8 +277,50 @@ void XYPad::paintPuck (juce::Graphics& g, juce::Rectangle<float> area)
     g.drawEllipse (juce::Rectangle<float> (20.0f, 20.0f).withCentre (centre), 1.0f);
 }
 
+bool XYPad::keyPressed (const juce::KeyPress& key)
+{
+    const auto step = key.getModifiers().isShiftDown() ? 0.01f : 0.05f;
+
+    if (key.isKeyCode (juce::KeyPress::leftKey) || key.isKeyCode (juce::KeyPress::rightKey))
+    {
+        const auto delta = key.isKeyCode (juce::KeyPress::rightKey) ? step : -step;
+        attachmentX.setValueAsCompleteGesture (juce::jlimit (0.0f, 1.0f, valueX + delta));
+        return true;
+    }
+
+    if (key.isKeyCode (juce::KeyPress::upKey) || key.isKeyCode (juce::KeyPress::downKey))
+    {
+        const auto delta = key.isKeyCode (juce::KeyPress::upKey) ? step : -step;
+        attachmentY.setValueAsCompleteGesture (juce::jlimit (0.0f, 1.0f, valueY + delta));
+        return true;
+    }
+
+    if (key.isKeyCode (juce::KeyPress::homeKey))
+    {
+        attachmentX.setValueAsCompleteGesture (0.5f);
+        attachmentY.setValueAsCompleteGesture (0.5f);
+        return true;
+    }
+
+    return false;
+}
+
+void XYPad::focusGained (FocusChangeType)
+{
+    focused = true;
+    repaint();
+}
+
+void XYPad::focusLost (FocusChangeType)
+{
+    focused = false;
+    repaint();
+}
+
 void XYPad::mouseDown (const juce::MouseEvent& event)
 {
+    grabKeyboardFocus();
+
     if (event.mods.isPopupMenu())
     {
         if (onContextMenu != nullptr)

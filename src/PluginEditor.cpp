@@ -107,8 +107,11 @@ XYBassEditor::XYBassEditor (XYBassProcessor& owner)
     bypassAttachment = std::make_unique<ButtonAttachment> (state, xyb::ids::bypass, bypassButton);
 
     setResizable (true, true);
-    setResizeLimits (520, 540, 1100, 1140);
-    setSize (600, 640);
+    getConstrainer()->setFixedAspectRatio (600.0 / 640.0);
+    setResizeLimits (520, 554, 1080, 1152);
+
+    const auto& stored = state.state;
+    setSize ((int) stored.getProperty ("editorWidth", 600), (int) stored.getProperty ("editorHeight", 640));
 
     startTimerHz (12);
 }
@@ -124,6 +127,7 @@ void XYBassEditor::configureRotary (juce::Slider& slider, juce::Label& label, co
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 62, 16);
     slider.setColour (juce::Slider::textBoxTextColourId, kText.withAlpha (0.8f));
+    slider.setTitle (text);
     addAndMakeVisible (slider);
 
     label.setText (text, juce::dontSendNotification);
@@ -159,6 +163,10 @@ void XYBassEditor::paint (juce::Graphics& g)
 
 void XYBassEditor::resized()
 {
+    auto stored = processor.getValueTreeState().state;
+    stored.setProperty ("editorWidth", getWidth(), nullptr);
+    stored.setProperty ("editorHeight", getHeight(), nullptr);
+
     auto bounds = getLocalBounds();
     bounds.removeFromTop (44);
 
