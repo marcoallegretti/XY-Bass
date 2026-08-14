@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(XYBass VERSION 1.0.0 LANGUAGES CXX)
+project(XYBass VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -127,6 +127,104 @@ if(MSVC)
 endif()
 
 add_test(NAME xy-bass-engine COMMAND XYBassTests)
+
+juce_add_console_app(XYBassAnalysisTests
+    PRODUCT_NAME "XY Bass Analysis Tests"
+)
+
+target_sources(XYBassAnalysisTests
+    PRIVATE
+        ${XYBASS_DSP_SOURCES}
+        tests/AnalysisTests.cpp
+)
+
+target_include_directories(XYBassAnalysisTests PRIVATE src)
+
+target_compile_definitions(XYBassAnalysisTests
+    PRIVATE
+        JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+)
+
+target_link_libraries(XYBassAnalysisTests
+    PRIVATE
+        juce::juce_dsp
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+
+if(MSVC)
+    target_compile_options(XYBassAnalysisTests PRIVATE /utf-8)
+endif()
+
+add_test(NAME xy-bass-analysis COMMAND XYBassAnalysisTests)
+
+juce_add_console_app(XYBassMaterialTests
+    PRODUCT_NAME "XY Bass Material Tests"
+)
+
+target_sources(XYBassMaterialTests
+    PRIVATE
+        ${XYBASS_DSP_SOURCES}
+        tests/MaterialTests.cpp
+)
+
+target_include_directories(XYBassMaterialTests PRIVATE src)
+
+target_compile_definitions(XYBassMaterialTests
+    PRIVATE
+        JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+)
+
+target_link_libraries(XYBassMaterialTests
+    PRIVATE
+        juce::juce_dsp
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+
+if(MSVC)
+    target_compile_options(XYBassMaterialTests PRIVATE /utf-8)
+endif()
+
+add_test(NAME xy-bass-material COMMAND XYBassMaterialTests)
+
+juce_add_console_app(XYBassPerformanceTests
+    PRODUCT_NAME "XY Bass Performance Tests"
+)
+
+target_sources(XYBassPerformanceTests
+    PRIVATE
+        ${XYBASS_DSP_SOURCES}
+        tests/PerformanceTests.cpp
+)
+
+target_include_directories(XYBassPerformanceTests PRIVATE src)
+
+target_compile_definitions(XYBassPerformanceTests
+    PRIVATE
+        JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+)
+
+target_link_libraries(XYBassPerformanceTests
+    PRIVATE
+        juce::juce_dsp
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+if(MSVC)
+    target_compile_options(XYBassPerformanceTests PRIVATE /utf-8)
+endif()
+
+add_test(NAME xy-bass-performance COMMAND XYBassPerformanceTests)
+
 
 juce_add_console_app(XYBassPluginTests
     PRODUCT_NAME "XY Bass Plugin Tests"
