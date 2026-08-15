@@ -292,25 +292,35 @@ void XYPad::paintTexture (juce::Graphics& g, juce::Rectangle<float> area)
     if (drive < 0.02f)
         return;
 
-    juce::Path strokes;
+    std::array<juce::Path, 3> buckets;
 
     for (const auto& point : texture)
     {
-        const auto verticalWeight = point.y * point.y;
+        const auto verticalWeight = point.y * point.y * point.y;
+        const auto intensity = verticalWeight * drive;
 
-        if (verticalWeight * drive < 0.05f)
+        if (intensity < 0.05f)
             continue;
 
         const auto x = area.getX() + point.x * area.getWidth();
         const auto y = area.getBottom() - point.y * area.getHeight();
-        const auto length = point.length * (0.4f + 0.6f * drive);
+        const auto length = point.length * (0.35f + 0.65f * drive) * (0.4f + 0.6f * verticalWeight);
+        const auto bucket = (size_t) juce::jlimit (0, 2, (int) (intensity * 3.0f));
 
-        strokes.startNewSubPath (x, y);
-        strokes.lineTo (x + std::cos (point.angle) * length, y + std::sin (point.angle) * length);
+        buckets[bucket].startNewSubPath (x, y);
+        buckets[bucket].lineTo (x + std::cos (point.angle) * length * 1.5f,
+                                y + std::sin (point.angle) * length * 0.45f);
     }
 
-    g.setColour (theme.accentGlow.withAlpha (0.20f * drive));
-    g.strokePath (strokes, juce::PathStrokeType (1.0f));
+    for (size_t bucket = 0; bucket < buckets.size(); ++bucket)
+    {
+        if (buckets[bucket].isEmpty())
+            continue;
+
+        const auto alpha = (0.09f + 0.16f * (float) bucket) * drive;
+        g.setColour (theme.accentGlow.withAlpha (alpha));
+        g.strokePath (buckets[bucket], juce::PathStrokeType (1.0f + 0.25f * (float) bucket));
+    }
 }
 
 void XYPad::paintPuck (juce::Graphics& g, juce::Rectangle<float> area)
