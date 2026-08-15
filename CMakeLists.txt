@@ -48,6 +48,13 @@ juce_add_plugin(XYBass
     VST3_CATEGORIES Fx Dynamics Distortion
 )
 
+set(XYBASS_UI_SOURCES
+    src/PluginEditor.cpp
+    src/XYPad.cpp
+    src/ui/SeriesLookAndFeel.cpp
+    src/ui/Surface.cpp
+)
+
 set(XYBASS_DSP_SOURCES
     src/BassEngine.cpp
     src/PitchTracker.cpp
@@ -61,10 +68,9 @@ set(XYBASS_DSP_SOURCES
 target_sources(XYBass
     PRIVATE
         ${XYBASS_DSP_SOURCES}
-        src/PluginEditor.cpp
+        ${XYBASS_UI_SOURCES}
         src/PluginProcessor.cpp
         src/Presets.cpp
-        src/XYPad.cpp
 )
 
 target_compile_definitions(XYBass
@@ -233,10 +239,9 @@ juce_add_console_app(XYBassPluginTests
 target_sources(XYBassPluginTests
     PRIVATE
         ${XYBASS_DSP_SOURCES}
-        src/PluginEditor.cpp
+        ${XYBASS_UI_SOURCES}
         src/PluginProcessor.cpp
         src/Presets.cpp
-        src/XYPad.cpp
         tests/PluginTests.cpp
 )
 
