@@ -2,7 +2,7 @@
 
 namespace
 {
-constexpr float kPadInset = 18.0f;
+constexpr float kBezel = 13.0f;
 constexpr float kLowFrequency = 30.0f;
 constexpr float kHighFrequency = 2000.0f;
 
@@ -20,19 +20,23 @@ float approach (float current, float target, float rate)
 
 XYPad::XYPad (juce::RangedAudioParameter& xParameter,
               juce::RangedAudioParameter& yParameter,
-              const xyb::EngineMeters& engineMeters)
+              const xyb::EngineMeters& engineMeters,
+              const xyui::Theme& themeToUse)
     : meters (engineMeters),
+      theme (themeToUse),
       attachmentX (xParameter, [this] (float value) { valueX = value; repaint(); }),
       attachmentY (yParameter, [this] (float value) { valueY = value; repaint(); })
 {
     attachmentX.sendInitialUpdate();
     attachmentY.sendInitialUpdate();
+
     setWantsKeyboardFocus (true);
     setTitle ("Bass character pad");
     setDescription ("Horizontal axis moves between sub weight and small speaker translation. "
                     "Vertical axis moves between clean and dirty processing.");
     setHelpText ("Drag to set the bass character. Arrow keys nudge, shift for fine steps, "
                  "double click returns to the centre.");
+
     startTimerHz (30);
 }
 
@@ -41,14 +45,14 @@ XYPad::~XYPad()
     stopTimer();
 }
 
-juce::Rectangle<float> XYPad::getPadBounds() const
+juce::Rectangle<float> XYPad::getScreenBounds() const
 {
-    return getLocalBounds().toFloat().reduced (kPadInset);
+    return getLocalBounds().toFloat().reduced (kBezel);
 }
 
 juce::Point<float> XYPad::positionToPoint (float x, float y) const
 {
-    const auto area = getPadBounds();
+    const auto area = getScreenBounds().reduced (10.0f);
     return { area.getX() + x * area.getWidth(), area.getBottom() - y * area.getHeight() };
 }
 
@@ -57,17 +61,95 @@ void XYPad::resized()
     juce::Random random (0x23D5Fu);
 
     texture.clear();
-    texture.reserve (220);
+    texture.reserve (260);
 
-    for (int i = 0; i < 220; ++i)
+    for (int i = 0; i < 260; ++i)
+        texture.push_back ({ random.nextFloat(), random.nextFloat(),
+                             4.0f + random.nextFloat() * 13.0f,
+                             (random.nextFloat() - 0.5f) * 1.5f });
+
+    renderChrome();
+}
+
+void XYPad::renderChrome()
+{
+    const auto bounds = getLocalBounds();
+
+    if (bounds.isEmpty())
+        return;
+
+    chromeScale = juce::jlimit (1.0f, 2.0f, juce::Component::getApproximateScaleFactorForComponent (this));
+
+    chrome = juce::Image (juce::Image::ARGB,
+                          juce::roundToInt ((float) bounds.getWidth() * chromeScale),
+                          juce::roundToInt ((float) bounds.getHeight() * chromeScale), true);
+
+    juce::Graphics g (chrome);
+    g.addTransform (juce::AffineTransform::scale (chromeScale));
+
+    xyui::surface::drawRaised (g, bounds.toFloat(), theme, theme.corner + 3.0f);
+
+    const auto screen = getScreenBounds();
+    xyui::surface::drawScreen (g, screen, theme, theme.corner);
+
+    juce::Path clip;
+    clip.addRoundedRectangle (screen, theme.corner);
+
     {
-        TexturePoint point;
-        point.x = random.nextFloat();
-        point.y = random.nextFloat();
-        point.length = 4.0f + random.nextFloat() * 12.0f;
-        point.angle = (random.nextFloat() - 0.5f) * 1.4f;
-        texture.push_back (point);
+        juce::Graphics::ScopedSaveState state (g);
+        g.reduceClipRegion (clip);
+
+        for (int i = 1; i < 4; ++i)
+        {
+            const auto proportion = (float) i / 4.0f;
+            const auto lineX = screen.getX() + screen.getWidth() * proportion;
+            const auto lineY = screen.getY() + screen.getHeight() * proportion;
+
+            g.setColour (juce::Colours::black.withAlpha (0.5f));
+            g.fillRect (lineX, screen.getY(), 1.0f, screen.getHeight());
+            g.fillRect (screen.getX(), lineY, screen.getWidth(), 1.0f);
+
+            g.setColour (juce::Colours::white.withAlpha (0.045f));
+            g.fillRect (lineX + 1.0f, screen.getY(), 1.0f, screen.getHeight());
+            g.fillRect (screen.getX(), lineY + 1.0f, screen.getWidth(), 1.0f);
+        }
     }
+
+    for (int i = 0; i <= 8; ++i)
+    {
+        const auto proportion = (float) i / 8.0f;
+        const auto length = i % 2 == 0 ? 5.0f : 3.0f;
+        const auto tickX = screen.getX() + screen.getWidth() * proportion;
+        const auto tickY = screen.getY() + screen.getHeight() * proportion;
+
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillRect (tickX, screen.getY() - length - 2.0f, 1.0f, length);
+        g.fillRect (tickX, screen.getBottom() + 2.0f, 1.0f, length);
+        g.fillRect (screen.getX() - length - 2.0f, tickY, length, 1.0f);
+        g.fillRect (screen.getRight() + 2.0f, tickY, length, 1.0f);
+
+        g.setColour (juce::Colours::white.withAlpha (0.10f));
+        g.fillRect (tickX + 1.0f, screen.getY() - length - 2.0f, 1.0f, length);
+        g.fillRect (tickX + 1.0f, screen.getBottom() + 2.0f, 1.0f, length);
+        g.fillRect (screen.getX() - length - 2.0f, tickY + 1.0f, length, 1.0f);
+        g.fillRect (screen.getRight() + 2.0f, tickY + 1.0f, length, 1.0f);
+    }
+
+    g.setFont (juce::FontOptions (9.5f).withStyle ("Bold"));
+
+    const auto inset = 14.0f;
+    xyui::surface::drawEngravedText (g, "DIRTY",
+                                     { screen.getX(), screen.getY() + inset, screen.getWidth(), 12.0f },
+                                     juce::Justification::centred, theme, theme.textDim.withAlpha (0.75f));
+    xyui::surface::drawEngravedText (g, "CLEAN",
+                                     { screen.getX(), screen.getBottom() - inset - 12.0f, screen.getWidth(), 12.0f },
+                                     juce::Justification::centred, theme, theme.textDim.withAlpha (0.75f));
+    xyui::surface::drawEngravedText (g, "SUB",
+                                     { screen.getX() + inset, screen.getCentreY() - 6.0f, 110.0f, 12.0f },
+                                     juce::Justification::centredLeft, theme, theme.textDim.withAlpha (0.75f));
+    xyui::surface::drawEngravedText (g, "TRANSLATE",
+                                     { screen.getRight() - inset - 110.0f, screen.getCentreY() - 6.0f, 110.0f, 12.0f },
+                                     juce::Justification::centredRight, theme, theme.textDim.withAlpha (0.75f));
 }
 
 void XYPad::timerCallback()
@@ -76,9 +158,11 @@ void XYPad::timerCallback()
 
     if (fundamental > 20.0f)
         smoothedFundamental = approach (smoothedFundamental, fundamental, 0.25f);
+
     smoothedLowLevel = approach (smoothedLowLevel, meters.lowEnvelope.load (std::memory_order_relaxed), 0.3f);
     smoothedSubLevel = approach (smoothedSubLevel, meters.subGeneration.load (std::memory_order_relaxed), 0.3f);
-    smoothedHarmonicLevel = approach (smoothedHarmonicLevel, meters.harmonicGeneration.load (std::memory_order_relaxed), 0.3f);
+    smoothedHarmonicLevel = approach (smoothedHarmonicLevel,
+                                      meters.harmonicGeneration.load (std::memory_order_relaxed), 0.3f);
     smoothedDrive = approach (smoothedDrive, meters.drive.load (std::memory_order_relaxed), 0.2f);
     smoothedOutput = approach (smoothedOutput, meters.outputLevel.load (std::memory_order_relaxed), 0.3f);
 
@@ -95,65 +179,60 @@ void XYPad::timerCallback()
 
 void XYPad::paint (juce::Graphics& g)
 {
-    const auto area = getPadBounds();
+    if (chrome.isNull())
+        renderChrome();
 
-    paintField (g, area);
-    paintWaves (g, area);
-    paintHarmonics (g, area);
-    paintTexture (g, area);
-    paintLabels (g, area);
-    paintPuck (g, area);
-}
+    g.drawImageTransformed (chrome, juce::AffineTransform::scale (1.0f / chromeScale));
 
-void XYPad::paintField (juce::Graphics& g, juce::Rectangle<float> area)
-{
-    const auto cool = juce::Colour::fromFloatRGBA (0.09f, 0.13f, 0.20f, 1.0f);
-    const auto deep = juce::Colour::fromFloatRGBA (0.10f, 0.10f, 0.24f, 1.0f);
-    const auto warm = juce::Colour::fromFloatRGBA (0.24f, 0.11f, 0.11f, 1.0f);
-    const auto ember = juce::Colour::fromFloatRGBA (0.30f, 0.16f, 0.07f, 1.0f);
+    const auto screen = getScreenBounds();
 
-    const auto bottom = deep.interpolatedWith (cool, valueX);
-    const auto top = warm.interpolatedWith (ember, valueX);
+    juce::Path clip;
+    clip.addRoundedRectangle (screen, theme.corner);
 
-    juce::ColourGradient gradient (top, area.getCentreX(), area.getY(), bottom, area.getCentreX(), area.getBottom(), false);
-    g.setGradientFill (gradient);
-    g.fillRoundedRectangle (area, 8.0f);
-
-    g.setColour (juce::Colours::white.withAlpha (0.05f));
-
-    for (int i = 1; i < 4; ++i)
     {
-        const auto proportion = (float) i / 4.0f;
-        g.drawHorizontalLine (juce::roundToInt (area.getY() + area.getHeight() * proportion),
-                              area.getX(), area.getRight());
-        g.drawVerticalLine (juce::roundToInt (area.getX() + area.getWidth() * proportion),
-                            area.getY(), area.getBottom());
+        juce::Graphics::ScopedSaveState state (g);
+        g.reduceClipRegion (clip);
+
+        const auto puck = positionToPoint (valueX, valueY);
+        const auto bloom = juce::jmax (screen.getWidth(), screen.getHeight()) * 0.34f;
+
+        g.setGradientFill ({ theme.accent.withAlpha (0.055f + 0.035f * valueY), puck.x, puck.y,
+                             juce::Colours::transparentBlack, puck.x + bloom, puck.y, true });
+        g.fillRect (screen);
+
+        paintWaves (g, screen);
+        paintHarmonics (g, screen);
+        paintTexture (g, screen);
     }
 
-    g.setColour (juce::Colours::white.withAlpha (focused ? 0.28f : 0.10f));
-    g.drawRoundedRectangle (area, 8.0f, 1.0f);
+    paintPuck (g, screen);
+
+    xyui::surface::drawGlass (g, screen, theme.corner);
+
+    if (focused)
+    {
+        g.setColour (theme.accent.withAlpha (0.45f));
+        g.drawRoundedRectangle (screen.reduced (1.0f), theme.corner, 1.2f);
+    }
 }
 
 void XYPad::paintWaves (juce::Graphics& g, juce::Rectangle<float> area)
 {
     const auto energy = xyb::meterDisplay (smoothedLowLevel, -42.0f);
 
-    if (energy < 0.01f)
+    if (energy < 0.02f)
         return;
 
     const auto generated = xyb::meterDisplay (smoothedSubLevel, -48.0f);
     const auto cycles = juce::jlimit (0.7f, 6.0f, smoothedFundamental / 22.0f);
-    const auto amplitude = area.getHeight() * 0.14f * energy;
-
-    juce::Graphics::ScopedSaveState state (g);
-    g.reduceClipRegion (area.toNearestInt());
+    const auto amplitude = area.getHeight() * 0.15f * energy;
 
     for (int layer = 0; layer < 3; ++layer)
     {
         juce::Path path;
         const auto offset = (float) layer * 0.22f;
         const auto scale = 1.0f - (float) layer * 0.28f;
-        const auto centre = area.getCentreY() + (float) (layer - 1) * area.getHeight() * 0.16f;
+        const auto centre = area.getCentreY() + (float) (layer - 1) * area.getHeight() * 0.17f;
 
         for (int i = 0; i <= 96; ++i)
         {
@@ -168,9 +247,13 @@ void XYPad::paintWaves (juce::Graphics& g, juce::Rectangle<float> area)
                 path.lineTo (x, y);
         }
 
-        const auto alpha = (0.30f - (float) layer * 0.08f) * (0.45f + 0.55f * generated);
-        g.setColour (juce::Colour::fromFloatRGBA (0.55f, 0.72f, 1.0f, alpha));
-        g.strokePath (path, juce::PathStrokeType (1.6f - (float) layer * 0.35f));
+        const auto alpha = (0.34f - (float) layer * 0.09f) * (0.4f + 0.6f * generated);
+
+        g.setColour (juce::Colour::fromFloatRGBA (0.42f, 0.62f, 0.95f, alpha * 0.35f));
+        g.strokePath (path, juce::PathStrokeType (3.4f - (float) layer * 0.6f));
+
+        g.setColour (juce::Colour::fromFloatRGBA (0.62f, 0.80f, 1.0f, alpha));
+        g.strokePath (path, juce::PathStrokeType (1.3f - (float) layer * 0.22f));
     }
 }
 
@@ -178,30 +261,27 @@ void XYPad::paintHarmonics (juce::Graphics& g, juce::Rectangle<float> area)
 {
     const auto level = xyb::meterDisplay (smoothedHarmonicLevel, -54.0f);
 
-    if (level < 0.01f || smoothedFundamental < 20.0f)
+    if (level < 0.02f || smoothedFundamental < 20.0f)
         return;
-
-    juce::Graphics::ScopedSaveState state (g);
-    g.reduceClipRegion (area.toNearestInt());
 
     for (size_t index = 0; index < smoothedWeights.size(); ++index)
     {
         const auto order = (float) (index + 2);
-        const auto frequency = smoothedFundamental * order;
-        const auto position = frequencyToPosition (frequency);
+        const auto position = frequencyToPosition (smoothedFundamental * order);
         const auto x = area.getX() + position * area.getWidth();
         const auto weight = juce::jlimit (0.0f, 1.0f, smoothedWeights[index]);
-        const auto alpha = weight * level * 0.55f;
+        const auto alpha = weight * level * 0.6f;
 
         if (alpha < 0.01f)
             continue;
 
-        juce::ColourGradient gradient (juce::Colour::fromFloatRGBA (1.0f, 0.78f, 0.42f, alpha),
-                                       x, area.getBottom(),
-                                       juce::Colour::fromFloatRGBA (1.0f, 0.78f, 0.42f, 0.0f),
-                                       x, area.getY(), false);
-        g.setGradientFill (gradient);
-        g.fillRect (juce::Rectangle<float> (x - 1.0f, area.getY(), 2.0f, area.getHeight()));
+        g.setGradientFill ({ theme.accentGlow.withAlpha (alpha), x, area.getBottom(),
+                             juce::Colours::transparentBlack, x, area.getY(), false });
+        g.fillRect (juce::Rectangle<float> (x - 1.5f, area.getY(), 3.0f, area.getHeight()));
+
+        g.setGradientFill ({ theme.accentGlow.withAlpha (juce::jmin (1.0f, alpha * 1.6f)), x, area.getBottom(),
+                             juce::Colours::transparentBlack, x, area.getCentreY(), false });
+        g.fillRect (juce::Rectangle<float> (x - 0.5f, area.getY(), 1.0f, area.getHeight()));
     }
 }
 
@@ -211,9 +291,6 @@ void XYPad::paintTexture (juce::Graphics& g, juce::Rectangle<float> area)
 
     if (drive < 0.02f)
         return;
-
-    juce::Graphics::ScopedSaveState state (g);
-    g.reduceClipRegion (area.toNearestInt());
 
     juce::Path strokes;
 
@@ -232,49 +309,97 @@ void XYPad::paintTexture (juce::Graphics& g, juce::Rectangle<float> area)
         strokes.lineTo (x + std::cos (point.angle) * length, y + std::sin (point.angle) * length);
     }
 
-    g.setColour (juce::Colour::fromFloatRGBA (1.0f, 0.62f, 0.36f, 0.16f * drive));
+    g.setColour (theme.accentGlow.withAlpha (0.20f * drive));
     g.strokePath (strokes, juce::PathStrokeType (1.0f));
-}
-
-void XYPad::paintLabels (juce::Graphics& g, juce::Rectangle<float> area)
-{
-    g.setFont (juce::FontOptions (10.5f).withStyle ("Bold"));
-    g.setColour (juce::Colours::white.withAlpha (0.34f));
-
-    const auto inset = 12.0f;
-
-    g.drawText ("DIRTY", juce::Rectangle<float> (area.getX(), area.getY() + inset, area.getWidth(), 14.0f),
-                juce::Justification::centred);
-    g.drawText ("CLEAN", juce::Rectangle<float> (area.getX(), area.getBottom() - inset - 14.0f, area.getWidth(), 14.0f),
-                juce::Justification::centred);
-    g.drawText ("SUB", juce::Rectangle<float> (area.getX() + inset, area.getCentreY() - 7.0f, 100.0f, 14.0f),
-                juce::Justification::centredLeft);
-    g.drawText ("TRANSLATE", juce::Rectangle<float> (area.getRight() - inset - 100.0f, area.getCentreY() - 7.0f, 100.0f, 14.0f),
-                juce::Justification::centredRight);
 }
 
 void XYPad::paintPuck (juce::Graphics& g, juce::Rectangle<float> area)
 {
     const auto centre = positionToPoint (valueX, valueY);
     const auto level = xyb::meterDisplay (smoothedOutput, -42.0f);
+    const auto radius = 13.0f;
 
-    g.setColour (juce::Colours::white.withAlpha (0.10f));
-    g.drawHorizontalLine (juce::roundToInt (centre.y), area.getX(), area.getRight());
-    g.drawVerticalLine (juce::roundToInt (centre.x), area.getY(), area.getBottom());
+    {
+        juce::Path clip;
+        clip.addRoundedRectangle (area, theme.corner);
 
-    const auto glowRadius = 14.0f + 26.0f * level;
-    juce::ColourGradient glow (juce::Colour::fromFloatRGBA (1.0f, 0.86f, 0.62f, 0.30f + 0.25f * level),
-                               centre.x, centre.y,
-                               juce::Colour::fromFloatRGBA (1.0f, 0.86f, 0.62f, 0.0f),
-                               centre.x + glowRadius, centre.y, true);
-    g.setGradientFill (glow);
-    g.fillEllipse (juce::Rectangle<float> (glowRadius * 2.0f, glowRadius * 2.0f).withCentre (centre));
+        juce::Graphics::ScopedSaveState state (g);
+        g.reduceClipRegion (clip);
 
-    g.setColour (juce::Colours::white.withAlpha (0.92f));
-    g.fillEllipse (juce::Rectangle<float> (11.0f, 11.0f).withCentre (centre));
+        g.setColour (juce::Colours::white.withAlpha (0.055f));
+        g.drawHorizontalLine (juce::roundToInt (centre.y), area.getX(), area.getRight());
+        g.drawVerticalLine (juce::roundToInt (centre.x), area.getY(), area.getBottom());
+    }
 
-    g.setColour (juce::Colours::white.withAlpha (0.35f));
-    g.drawEllipse (juce::Rectangle<float> (20.0f, 20.0f).withCentre (centre), 1.0f);
+    const auto body = juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (centre);
+
+    juce::Path shape;
+    shape.addEllipse (body);
+    juce::DropShadow (juce::Colours::black.withAlpha (0.72f), 12, { 0, 4 }).drawForPath (g, shape);
+
+    g.setGradientFill ({ theme.metalHigh, body.getX() + body.getWidth() * 0.25f, body.getY(),
+                         theme.metalLow, body.getRight(), body.getBottom(), false });
+    g.fillEllipse (body);
+
+    g.setColour (juce::Colours::black.withAlpha (0.5f));
+    g.drawEllipse (body.reduced (0.5f), 1.0f);
+
+    const auto dish = body.reduced (radius * 0.3f);
+    g.setGradientFill ({ theme.metalLow.darker (0.3f), dish.getCentreX(), dish.getY(),
+                         theme.metal, dish.getCentreX(), dish.getBottom(), false });
+    g.fillEllipse (dish);
+
+    xyui::surface::drawIndicatorLamp (g, body.reduced (radius * 0.62f), theme, 0.25f + 0.75f * level);
+
+    g.setColour (juce::Colours::white.withAlpha (0.22f));
+    g.drawEllipse (body.reduced (1.4f), 1.0f);
+}
+
+void XYPad::mouseDown (const juce::MouseEvent& event)
+{
+    if (event.mods.isPopupMenu())
+    {
+        if (onContextMenu != nullptr)
+            onContextMenu();
+
+        return;
+    }
+
+    grabKeyboardFocus();
+
+    dragging = true;
+    dragAnchor = event.position;
+    dragOrigin = { valueX, valueY };
+
+    attachmentX.beginGesture();
+    attachmentY.beginGesture();
+
+    if (! event.mods.isShiftDown())
+        updateFromMouse (event);
+}
+
+void XYPad::mouseDrag (const juce::MouseEvent& event)
+{
+    if (dragging)
+        updateFromMouse (event);
+}
+
+void XYPad::mouseUp (const juce::MouseEvent& event)
+{
+    juce::ignoreUnused (event);
+
+    if (! dragging)
+        return;
+
+    dragging = false;
+    attachmentX.endGesture();
+    attachmentY.endGesture();
+}
+
+void XYPad::mouseDoubleClick (const juce::MouseEvent&)
+{
+    attachmentX.setValueAsCompleteGesture (0.5f);
+    attachmentY.setValueAsCompleteGesture (0.5f);
 }
 
 bool XYPad::keyPressed (const juce::KeyPress& key)
@@ -317,58 +442,9 @@ void XYPad::focusLost (FocusChangeType)
     repaint();
 }
 
-void XYPad::mouseDown (const juce::MouseEvent& event)
-{
-    grabKeyboardFocus();
-
-    if (event.mods.isPopupMenu())
-    {
-        if (onContextMenu != nullptr)
-            onContextMenu();
-
-        return;
-    }
-
-    dragging = true;
-    dragAnchor = event.position;
-    dragOrigin = { valueX, valueY };
-
-    attachmentX.beginGesture();
-    attachmentY.beginGesture();
-
-    if (! event.mods.isShiftDown())
-        updateFromMouse (event);
-}
-
-void XYPad::mouseDrag (const juce::MouseEvent& event)
-{
-    if (! dragging)
-        return;
-
-    updateFromMouse (event);
-}
-
-void XYPad::mouseUp (const juce::MouseEvent& event)
-{
-    juce::ignoreUnused (event);
-
-    if (! dragging)
-        return;
-
-    dragging = false;
-    attachmentX.endGesture();
-    attachmentY.endGesture();
-}
-
-void XYPad::mouseDoubleClick (const juce::MouseEvent&)
-{
-    attachmentX.setValueAsCompleteGesture (0.5f);
-    attachmentY.setValueAsCompleteGesture (0.5f);
-}
-
 void XYPad::updateFromMouse (const juce::MouseEvent& event)
 {
-    const auto area = getPadBounds();
+    const auto area = getScreenBounds().reduced (10.0f);
 
     if (area.getWidth() <= 0.0f || area.getHeight() <= 0.0f)
         return;

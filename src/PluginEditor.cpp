@@ -2,11 +2,6 @@
 
 namespace
 {
-const juce::Colour kBackground { 0xff0f1116 };
-const juce::Colour kPanel { 0xff161a22 };
-const juce::Colour kAccent { 0xffe8a05a };
-const juce::Colour kText { 0xffd8dde6 };
-
 juce::String describeNote (float frequency)
 {
     static const char* names[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
@@ -16,75 +11,14 @@ juce::String describeNote (float frequency)
 }
 } // namespace
 
-XYBassLookAndFeel::XYBassLookAndFeel()
-{
-    setColour (juce::Slider::textBoxTextColourId, kText);
-    setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    setColour (juce::Label::textColourId, kText.withAlpha (0.65f));
-    setColour (juce::ToggleButton::textColourId, kText.withAlpha (0.75f));
-    setColour (juce::PopupMenu::backgroundColourId, kPanel);
-    setColour (juce::PopupMenu::textColourId, kText);
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, kAccent.withAlpha (0.25f));
-    setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
-}
-
-void XYBassLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
-                                          float sliderPosProportional, float rotaryStartAngle,
-                                          float rotaryEndAngle, juce::Slider&)
-{
-    const auto bounds = juce::Rectangle<int> (x, y, width, height).toFloat().reduced (4.0f);
-    const auto radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
-    const auto centre = bounds.getCentre();
-    const auto angle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
-    const auto lineWidth = 2.4f;
-    const auto arcRadius = radius - lineWidth;
-
-    juce::Path background;
-    background.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
-                              rotaryStartAngle, rotaryEndAngle, true);
-    g.setColour (juce::Colours::white.withAlpha (0.12f));
-    g.strokePath (background, juce::PathStrokeType (lineWidth, juce::PathStrokeType::curved,
-                                                    juce::PathStrokeType::rounded));
-
-    juce::Path value;
-    value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f, rotaryStartAngle, angle, true);
-    g.setColour (kAccent.withAlpha (0.85f));
-    g.strokePath (value, juce::PathStrokeType (lineWidth, juce::PathStrokeType::curved,
-                                               juce::PathStrokeType::rounded));
-
-    const auto pointer = juce::Point<float> (centre.x + std::sin (angle) * (arcRadius - 4.0f),
-                                             centre.y - std::cos (angle) * (arcRadius - 4.0f));
-
-    g.setColour (kText);
-    g.drawLine ({ centre.x + std::sin (angle) * (arcRadius * 0.45f),
-                  centre.y - std::cos (angle) * (arcRadius * 0.45f),
-                  pointer.x, pointer.y }, 1.6f);
-}
-
-void XYBassLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button,
-                                          bool shouldDrawButtonAsHighlighted, bool)
-{
-    const auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
-    const auto on = button.getToggleState();
-
-    g.setColour (on ? kAccent.withAlpha (0.20f) : juce::Colours::white.withAlpha (0.05f));
-    g.fillRoundedRectangle (bounds, 4.0f);
-
-    g.setColour (on ? kAccent.withAlpha (0.75f)
-                    : juce::Colours::white.withAlpha (shouldDrawButtonAsHighlighted ? 0.28f : 0.14f));
-    g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
-
-    g.setColour (on ? juce::Colours::white.withAlpha (0.92f) : kText.withAlpha (0.60f));
-    g.setFont (juce::FontOptions (10.0f).withStyle ("Bold"));
-    g.drawText (button.getButtonText(), bounds, juce::Justification::centred);
-}
-
 XYBassEditor::XYBassEditor (XYBassProcessor& owner)
     : juce::AudioProcessorEditor (owner),
       processor (owner),
+      theme (xyui::seriesTheme().withAccent (juce::Colour (0xffe0954a))),
+      lookAndFeel (theme),
       pad (*owner.getValueTreeState().getParameter (xyb::ids::positionX),
            *owner.getValueTreeState().getParameter (xyb::ids::positionY),
-           owner.getMeters())
+           owner.getMeters(), theme)
 {
     setLookAndFeel (&lookAndFeel);
 
@@ -125,40 +59,98 @@ XYBassEditor::~XYBassEditor()
 void XYBassEditor::configureRotary (juce::Slider& slider, juce::Label& label, const juce::String& text)
 {
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 62, 16);
-    slider.setColour (juce::Slider::textBoxTextColourId, kText.withAlpha (0.8f));
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 17);
     slider.setTitle (text);
     addAndMakeVisible (slider);
 
     label.setText (text, juce::dontSendNotification);
     label.setJustificationType (juce::Justification::centred);
-    label.setFont (juce::FontOptions (10.0f).withStyle ("Bold"));
+    label.setFont (juce::FontOptions (9.5f).withStyle ("Bold"));
+    label.setColour (juce::Label::textColourId, theme.textDim);
     addAndMakeVisible (label);
+}
+
+void XYBassEditor::renderChassis()
+{
+    const auto bounds = getLocalBounds();
+
+    if (bounds.isEmpty())
+        return;
+
+    chassisScale = juce::jlimit (1.0f, 2.0f, juce::Component::getApproximateScaleFactorForComponent (this));
+
+    chassis = juce::Image (juce::Image::ARGB,
+                           juce::roundToInt ((float) bounds.getWidth() * chassisScale),
+                           juce::roundToInt ((float) bounds.getHeight() * chassisScale), true);
+
+    juce::Graphics g (chassis);
+    g.addTransform (juce::AffineTransform::scale (chassisScale));
+
+    auto face = bounds.toFloat();
+    xyui::surface::drawBrushedFace (g, face, theme, 0.0f);
+
+    g.setColour (juce::Colours::black.withAlpha (0.45f));
+    g.drawRect (face, 1.0f);
+
+    if (! shelfBounds.isEmpty())
+        xyui::surface::drawRaised (g, shelfBounds, theme, theme.corner + 1.0f);
+
+    const auto header = face.removeFromTop (46.0f).reduced (18.0f, 0.0f);
+    const auto titleFont = juce::Font (juce::FontOptions (17.0f).withStyle ("Bold"));
+
+    g.setFont (titleFont);
+    xyui::surface::drawEngravedText (g, "XY BASS", header, juce::Justification::centredLeft, theme, theme.text);
+
+    const auto titleWidth = juce::GlyphArrangement::getStringWidth (titleFont, "XY BASS");
+
+    g.setFont (juce::FontOptions (8.5f).withStyle ("Bold"));
+    xyui::surface::drawEngravedText (g, "23DSP",
+                                     header.withTrimmedLeft (titleWidth + 9.0f).translated (0.0f, 2.0f),
+                                     juce::Justification::centredLeft, theme, theme.textDim.withAlpha (0.75f));
+
+    if (! readoutBounds.isEmpty())
+        xyui::surface::drawRecess (g, readoutBounds, theme, 4.0f, theme.screen);
+
+    const auto screwRadius = 4.0f;
+    const auto inset = 11.0f;
+    const std::array<juce::Point<float>, 4> screws {
+        { { inset, inset },
+          { (float) bounds.getWidth() - inset, inset },
+          { inset, (float) bounds.getHeight() - inset },
+          { (float) bounds.getWidth() - inset, (float) bounds.getHeight() - inset } }
+    };
+
+    auto angle = 0.4f;
+
+    for (const auto& position : screws)
+    {
+        xyui::surface::drawScrew (g, position, screwRadius, theme, angle);
+        angle += 1.1f;
+    }
 }
 
 void XYBassEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (kBackground);
+    if (chassis.isNull())
+        renderChassis();
 
-    auto header = getLocalBounds().removeFromTop (44).toFloat();
+    g.drawImageTransformed (chassis, juce::AffineTransform::scale (1.0f / chassisScale));
 
-    g.setColour (kText);
-    g.setFont (juce::FontOptions (16.0f).withStyle ("Bold"));
-    g.drawText ("XY BASS", header.reduced (18.0f, 0.0f), juce::Justification::centredLeft);
-
-    g.setColour (kText.withAlpha (0.35f));
-    g.setFont (juce::FontOptions (10.0f));
-    g.drawText ("23DSP", header.reduced (18.0f, 0.0f).translated (66.0f, 1.0f), juce::Justification::centredLeft);
+    if (readoutBounds.isEmpty())
+        return;
 
     if (readout.isNotEmpty())
     {
-        g.setColour (kAccent.withAlpha (0.8f));
-        g.setFont (juce::FontOptions (11.0f).withStyle ("Bold"));
-        g.drawText (readout, header.reduced (18.0f, 0.0f), juce::Justification::centredRight);
+        g.setFont (juce::FontOptions (10.5f).withStyle ("Bold"));
+        g.setColour (theme.accent.withAlpha (0.92f));
+        g.drawText (readout, readoutBounds, juce::Justification::centred);
     }
-
-    g.setColour (juce::Colours::white.withAlpha (0.06f));
-    g.fillRect (getLocalBounds().removeFromBottom (104).removeFromTop (1));
+    else
+    {
+        g.setFont (juce::FontOptions (10.5f).withStyle ("Bold"));
+        g.setColour (theme.accent.withAlpha (0.09f));
+        g.drawText ("---", readoutBounds, juce::Justification::centred);
+    }
 }
 
 void XYBassEditor::resized()
@@ -168,34 +160,38 @@ void XYBassEditor::resized()
     stored.setProperty ("editorHeight", getHeight(), nullptr);
 
     auto bounds = getLocalBounds();
-    bounds.removeFromTop (44);
+    const auto header = bounds.removeFromTop (46);
 
-    auto footer = bounds.removeFromBottom (104);
-    pad.setBounds (bounds.reduced (14, 4));
+    readoutBounds = header.toFloat().reduced (18.0f, 13.0f).removeFromRight (104.0f);
 
-    footer.removeFromTop (4);
-    auto row = footer.removeFromTop (92).reduced (14, 0);
+    auto footer = bounds.removeFromBottom (108);
+    pad.setBounds (bounds.reduced (16, 2));
 
+    shelfBounds = footer.toFloat().reduced (16.0f, 6.0f);
+
+    auto row = shelfBounds.toNearestInt().reduced (14, 9);
     auto knobs = row.removeFromLeft (row.getWidth() * 3 / 5);
     const auto knobWidth = knobs.getWidth() / 3;
 
     auto placeKnob = [] (juce::Rectangle<int> area, juce::Slider& slider, juce::Label& label)
     {
-        label.setBounds (area.removeFromTop (12));
-        slider.setBounds (area.reduced (4, 0));
+        label.setBounds (area.removeFromTop (11));
+        slider.setBounds (area.reduced (3, 0));
     };
 
     placeKnob (knobs.removeFromLeft (knobWidth), inputSlider, inputLabel);
     placeKnob (knobs.removeFromLeft (knobWidth), mixSlider, mixLabel);
     placeKnob (knobs, outputSlider, outputLabel);
 
-    const auto buttonWidth = juce::jmin (168, row.getWidth() - 12);
-    auto buttons = row.withSizeKeepingCentre (buttonWidth, row.getHeight() - 8);
+    const auto buttonWidth = juce::jmin (156, row.getWidth() - 10);
+    auto buttons = row.withSizeKeepingCentre (buttonWidth, row.getHeight() - 2);
     const auto buttonHeight = buttons.getHeight() / 3;
 
     autoGainButton.setBounds (buttons.removeFromTop (buttonHeight).reduced (0, 2));
     deltaButton.setBounds (buttons.removeFromTop (buttonHeight).reduced (0, 2));
     bypassButton.setBounds (buttons.reduced (0, 2));
+
+    renderChassis();
 }
 
 void XYBassEditor::timerCallback()
@@ -212,7 +208,7 @@ void XYBassEditor::timerCallback()
     if (next != readout)
     {
         readout = next;
-        repaint (getLocalBounds().removeFromTop (44));
+        repaint (readoutBounds.toNearestInt().expanded (2));
     }
 }
 

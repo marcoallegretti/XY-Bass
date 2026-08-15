@@ -2,20 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "XYPad.h"
-
-class XYBassLookAndFeel : public juce::LookAndFeel_V4
-{
-public:
-    XYBassLookAndFeel();
-
-    void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height,
-                           float sliderPosProportional, float rotaryStartAngle,
-                           float rotaryEndAngle, juce::Slider&) override;
-
-    void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
-                           bool shouldDrawButtonAsHighlighted,
-                           bool shouldDrawButtonAsDown) override;
-};
+#include "ui/SeriesLookAndFeel.h"
 
 class XYBassEditor : public juce::AudioProcessorEditor,
                      private juce::Timer
@@ -31,11 +18,19 @@ private:
     void timerCallback() override;
     void showContextMenu();
     void configureRotary (juce::Slider&, juce::Label&, const juce::String& text);
+    void renderChassis();
 
     XYBassProcessor& processor;
-    XYBassLookAndFeel lookAndFeel;
+    xyui::Theme theme;
+    xyui::SeriesLookAndFeel lookAndFeel;
 
     XYPad pad;
+
+    juce::Image chassis;
+    float chassisScale = 1.0f;
+
+    juce::Rectangle<float> readoutBounds;
+    juce::Rectangle<float> shelfBounds;
 
     juce::Slider inputSlider, mixSlider, outputSlider;
     juce::Label inputLabel, mixLabel, outputLabel;

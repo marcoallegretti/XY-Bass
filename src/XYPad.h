@@ -4,6 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "BassEngine.h"
+#include "ui/SeriesLookAndFeel.h"
 
 class XYPad : public juce::Component,
               private juce::Timer
@@ -11,7 +12,8 @@ class XYPad : public juce::Component,
 public:
     XYPad (juce::RangedAudioParameter& xParameter,
            juce::RangedAudioParameter& yParameter,
-           const xyb::EngineMeters& engineMeters);
+           const xyb::EngineMeters& engineMeters,
+           const xyui::Theme& themeToUse);
 
     ~XYPad() override;
 
@@ -32,19 +34,22 @@ private:
     void timerCallback() override;
     void updateFromMouse (const juce::MouseEvent& event);
     void sendPosition (float newX, float newY);
-    juce::Rectangle<float> getPadBounds() const;
+    juce::Rectangle<float> getScreenBounds() const;
     juce::Point<float> positionToPoint (float valueX, float valueY) const;
 
-    void paintField (juce::Graphics& g, juce::Rectangle<float> area);
+    void renderChrome();
     void paintWaves (juce::Graphics& g, juce::Rectangle<float> area);
     void paintHarmonics (juce::Graphics& g, juce::Rectangle<float> area);
     void paintTexture (juce::Graphics& g, juce::Rectangle<float> area);
-    void paintLabels (juce::Graphics& g, juce::Rectangle<float> area);
     void paintPuck (juce::Graphics& g, juce::Rectangle<float> area);
 
     const xyb::EngineMeters& meters;
+    const xyui::Theme& theme;
 
     juce::ParameterAttachment attachmentX, attachmentY;
+
+    juce::Image chrome;
+    float chromeScale = 1.0f;
 
     float valueX = 0.5f;
     float valueY = 0.5f;
@@ -59,10 +64,10 @@ private:
     std::array<float, 4> smoothedWeights { { 0.0f, 0.0f, 0.0f, 0.0f } };
 
     bool focused = false;
+    bool dragging = false;
 
     juce::Point<float> dragAnchor;
     juce::Point<float> dragOrigin;
-    bool dragging = false;
 
     struct TexturePoint
     {
