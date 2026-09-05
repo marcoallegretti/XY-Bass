@@ -57,9 +57,10 @@ public:
 
     void process (juce::AudioBuffer<float>& buffer);
     void processChunk (juce::AudioBuffer<float>& buffer);
-    void processBypassed (juce::AudioBuffer<float>& buffer);
+    void processBypassed (juce::AudioBuffer<float>& buffer, int numSamples);
 
     int getLatencySamples() const noexcept { return latencySamples; }
+    int getPreparedBlockSize() const noexcept { return preparedBlockSize; }
     const EngineMeters& getMeters() const noexcept { return meters; }
     const SourceFeatures& getFeatures() const noexcept { return analyser.getFeatures(); }
     const EngineTargets& getTargets() const noexcept { return targets; }

@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 
 #include <iostream>
+#include <vector>
 
 namespace
 {
@@ -17,6 +18,11 @@ void check (bool condition, const juce::String& description)
         ++failures;
         std::cout << "  FAIL  " << description << std::endl;
     }
+}
+
+void report (const juce::String& description, double value)
+{
+    std::cout << "        " << description << " = " << juce::String (value, 6) << std::endl;
 }
 
 void section (const juce::String& name)
@@ -183,6 +189,135 @@ void testProcessingContract()
     processor.releaseResources();
 }
 
+void renderSchedule (XYBassProcessor& processor, juce::AudioBuffer<float>& buffer,
+                     const std::vector<int>& schedule)
+{
+    juce::MidiBuffer midi;
+    float* pointers[2] = { nullptr, nullptr };
+    const auto numChannels = buffer.getNumChannels();
+
+    auto step = (size_t) 0;
+
+    for (int start = 0; start < buffer.getNumSamples();)
+    {
+        const auto want = schedule[step % schedule.size()];
+        const auto count = juce::jmin (want, buffer.getNumSamples() - start);
+        ++step;
+
+        if (count <= 0)
+            break;
+
+        for (int channel = 0; channel < numChannels; ++channel)
+            pointers[channel] = buffer.getWritePointer (channel) + start;
+
+        juce::AudioBuffer<float> view (pointers, numChannels, count);
+        processor.processBlock (view, midi);
+        start += count;
+    }
+}
+
+void testVariableBlockSizes()
+{
+    section ("variable host block sizes");
+
+    const auto sampleRate = 48000.0;
+    const auto prepared = 512;
+    const auto length = prepared * 40;
+
+    juce::AudioBuffer<float> source (2, length);
+
+    for (int channel = 0; channel < 2; ++channel)
+        for (int i = 0; i < length; ++i)
+            source.setSample (channel, i, 0.25f * (float) std::sin (juce::MathConstants<double>::twoPi
+                                                                    * 55.0 * i / sampleRate));
+
+    auto renderWith = [&] (const std::vector<int>& schedule, float mix, bool bypassed)
+    {
+        XYBassProcessor processor;
+        processor.setPlayConfigDetails (2, 2, sampleRate, prepared);
+        processor.getValueTreeState().getParameter (xyb::ids::mix)
+                 ->setValueNotifyingHost (mix);
+        processor.getValueTreeState().getParameter (xyb::ids::bypass)
+                 ->setValueNotifyingHost (bypassed ? 1.0f : 0.0f);
+        processor.prepareToPlay (sampleRate, prepared);
+        processor.prepareToPlay (sampleRate, prepared);
+
+        juce::AudioBuffer<float> buffer (source);
+        renderSchedule (processor, buffer, schedule);
+        return buffer;
+    };
+
+    const std::vector<int> uniform { prepared };
+    const std::vector<int> ragged { 512, 512, 200, 64, 512, 333, 512, 1, 512 };
+    const std::vector<int> oversized { 2048, 1024 };
+
+    auto worstDifference = [&] (const juce::AudioBuffer<float>& a, const juce::AudioBuffer<float>& b,
+                                int from)
+    {
+        double worst = 0.0;
+
+        for (int i = from; i < a.getNumSamples(); ++i)
+            worst = juce::jmax (worst, (double) std::abs (a.getSample (0, i) - b.getSample (0, i)));
+
+        return worst;
+    };
+
+    const auto dryReference = renderWith (uniform, 0.0f, false);
+    const auto dryRagged = renderWith (ragged, 0.0f, false);
+    const auto dryOversized = renderWith (oversized, 0.0f, false);
+
+    const auto dryRaggedError = worstDifference (dryReference, dryRagged, prepared * 4);
+    const auto dryOversizedError = worstDifference (dryReference, dryOversized, prepared * 4);
+
+    report ("dry path error with ragged blocks", dryRaggedError);
+    report ("dry path error with oversized blocks", dryOversizedError);
+
+    check (dryRaggedError == 0.0, "the delay compensated dry path is independent of the block schedule");
+    check (dryOversizedError == 0.0, "the delay compensated dry path is independent of oversized blocks");
+
+    const auto reference = renderWith (uniform, 1.0f, false);
+    const auto raggedWet = renderWith (ragged, 1.0f, false);
+    const auto oversizedWet = renderWith (oversized, 1.0f, false);
+
+    const auto raggedError = worstDifference (reference, raggedWet, prepared * 4);
+    const auto oversizedError = worstDifference (reference, oversizedWet, prepared * 4);
+
+    report ("wet output error with ragged blocks", raggedError);
+    report ("wet output error with oversized blocks", oversizedError);
+
+    check (oversizedError == 0.0, "the wet path is unaffected by oversized host blocks");
+    check (raggedError < 0.02, "block rate control granularity stays far below the signal level");
+
+    int latency = 0;
+
+    {
+        XYBassProcessor probe;
+        probe.setPlayConfigDetails (2, 2, sampleRate, prepared);
+        probe.prepareToPlay (sampleRate, prepared);
+        latency = probe.getLatencySamples();
+        probe.releaseResources();
+    }
+
+    report ("reported latency", latency);
+
+    auto checkBypassAlignment = [&] (const std::vector<int>& schedule, const juce::String& name)
+    {
+        const auto rendered = renderWith (schedule, 1.0f, true);
+        double worst = 0.0;
+
+        for (int i = prepared * 4; i < length; ++i)
+            worst = juce::jmax (worst, (double) std::abs (rendered.getSample (0, i)
+                                                          - source.getSample (0, i - latency)));
+
+        report ("bypass alignment error, " + name, worst);
+        check (worst < 1.0e-5, "bypass returns the delayed input with " + name);
+    };
+
+    checkBypassAlignment (uniform, "uniform blocks");
+    checkBypassAlignment (ragged, "ragged blocks");
+    checkBypassAlignment (oversized, "oversized blocks");
+}
+
 void testEditorLifecycle()
 {
     section ("editor lifecycle");
@@ -313,6 +448,7 @@ int main()
     testStateRoundTrip();
     testPresetRecall();
     testProcessingContract();
+    testVariableBlockSizes();
     testFactoryPresets();
     testEditorLifecycle();
 

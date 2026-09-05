@@ -304,12 +304,12 @@ public:
         delay = juce::jlimit (0, capacity - 1, samples);
     }
 
-    void process (juce::AudioBuffer<float>& target) noexcept
+    void process (juce::AudioBuffer<float>& target, int samplesToProcess) noexcept
     {
         const auto numChannels = juce::jmin (target.getNumChannels(), buffer.getNumChannels());
-        const auto numSamples = target.getNumSamples();
+        const auto numSamples = juce::jlimit (0, target.getNumSamples(), samplesToProcess);
 
-        if (delay == 0)
+        if (delay == 0 || numSamples == 0)
             return;
 
         auto index = writeIndex;

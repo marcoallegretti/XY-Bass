@@ -382,8 +382,8 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         oversampler->processSamplesDown (block);
     }
 
-    parallelDelay.process (parallelBuffer);
-    dryDelay.process (dryBuffer);
+    parallelDelay.process (parallelBuffer, numSamples);
+    dryDelay.process (dryBuffer, numSamples);
 
     bool invalid = false;
 
@@ -458,9 +458,9 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
     publishMeters();
 }
 
-void BassEngine::processBypassed (juce::AudioBuffer<float>& buffer)
+void BassEngine::processBypassed (juce::AudioBuffer<float>& buffer, int numSamples)
 {
-    bypassDelay.process (buffer);
+    bypassDelay.process (buffer, numSamples);
 }
 
 void BassEngine::publishMeters()

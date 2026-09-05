@@ -73,14 +73,15 @@ XYBassProcessor::XYBassProcessor()
 void XYBassProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     const auto channels = juce::jmax (1, getTotalNumOutputChannels());
+    const auto rate = sampleRate > 0.0 ? sampleRate : 44100.0;
 
-    engine.prepare (sampleRate, samplesPerBlock, channels);
+    engine.prepare (rate, samplesPerBlock, channels);
     setLatencySamples (engine.getLatencySamples());
 
-    bypassBuffer.setSize (channels, samplesPerBlock);
+    bypassBuffer.setSize (channels, engine.getPreparedBlockSize());
     bypassBuffer.clear();
 
-    bypassRamp.reset (sampleRate, 0.02);
+    bypassRamp.reset (rate, 0.02);
     bypassRamp.setCurrentAndTargetValue (bypassParameter->get() ? 1.0f : 0.0f);
 
     pullParameters();
@@ -127,27 +128,41 @@ void XYBassProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
 
     pullParameters();
 
-    if (numChannels <= 0 || numSamples <= 0)
+    const auto chunkSize = bypassBuffer.getNumSamples();
+
+    if (numChannels <= 0 || numSamples <= 0 || chunkSize <= 0)
         return;
-
-    for (int channel = 0; channel < numChannels; ++channel)
-        bypassBuffer.copyFrom (channel, 0, buffer, channel, 0, numSamples);
-
-    engine.processBypassed (bypassBuffer);
-    engine.process (buffer);
 
     bypassRamp.setTargetValue (bypassParameter->get() ? 1.0f : 0.0f);
 
-    if (bypassRamp.isSmoothing() || bypassRamp.getCurrentValue() > 0.0f)
-    {
-        for (int i = 0; i < numSamples; ++i)
-        {
-            const auto blend = bypassRamp.getNextValue();
+    std::array<float*, 2> pointers { { nullptr, nullptr } };
 
-            for (int channel = 0; channel < numChannels; ++channel)
+    for (int start = 0; start < numSamples; start += chunkSize)
+    {
+        const auto count = juce::jmin (chunkSize, numSamples - start);
+
+        for (int channel = 0; channel < numChannels; ++channel)
+            pointers[(size_t) channel] = buffer.getWritePointer (channel) + start;
+
+        juce::AudioBuffer<float> view (pointers.data(), numChannels, count);
+
+        for (int channel = 0; channel < numChannels; ++channel)
+            bypassBuffer.copyFrom (channel, 0, view, channel, 0, count);
+
+        engine.processBypassed (bypassBuffer, count);
+        engine.process (view);
+
+        if (bypassRamp.isSmoothing() || bypassRamp.getCurrentValue() > 0.0f)
+        {
+            for (int i = 0; i < count; ++i)
             {
-                auto* data = buffer.getWritePointer (channel);
-                data[i] += (bypassBuffer.getReadPointer (channel)[i] - data[i]) * blend;
+                const auto blend = bypassRamp.getNextValue();
+
+                for (int channel = 0; channel < numChannels; ++channel)
+                {
+                    auto* data = view.getWritePointer (channel);
+                    data[i] += (bypassBuffer.getReadPointer (channel)[i] - data[i]) * blend;
+                }
             }
         }
     }
@@ -156,7 +171,7 @@ void XYBassProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
 void XYBassProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
-    engine.processBypassed (buffer);
+    engine.processBypassed (buffer, buffer.getNumSamples());
 }
 
 int XYBassProcessor::getNumPrograms()
