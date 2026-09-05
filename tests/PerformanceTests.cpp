@@ -4,6 +4,12 @@
 #include <limits>
 #include <iostream>
 
+#if JUCE_WINDOWS
+ #define NOMINMAX
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+#endif
+
 using namespace xyb::testing;
 
 namespace
@@ -11,6 +17,14 @@ namespace
 
 int failures = 0;
 int checks = 0;
+
+void raiseMeasurementPriority()
+{
+   #if JUCE_WINDOWS
+    SetPriorityClass (GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    SetThreadPriority (GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+   #endif
+}
 
 void check (bool condition, const juce::String& description)
 {
@@ -267,6 +281,8 @@ void testAnalysisAmortisation()
 
 int main()
 {
+    raiseMeasurementPriority();
+
     testSteadyStateCost();
     testBlockCostConsistency();
     testAnalysisAmortisation();
