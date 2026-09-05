@@ -96,7 +96,7 @@ clap_juce_extensions_plugin(TARGET XYBass
 )
 
 if(MSVC)
-    target_compile_options(XYBass PRIVATE /utf-8)
+    target_compile_options(XYBass PRIVATE /utf-8 /arch:AVX)
 endif()
 
 enable_testing()
@@ -127,7 +127,7 @@ target_link_libraries(XYBassTests
 )
 
 if(MSVC)
-    target_compile_options(XYBassTests PRIVATE /utf-8)
+    target_compile_options(XYBassTests PRIVATE /utf-8 /arch:AVX)
 endif()
 
 add_test(NAME xy-bass-engine COMMAND XYBassTests)
@@ -158,7 +158,7 @@ target_link_libraries(XYBassAnalysisTests
 )
 
 if(MSVC)
-    target_compile_options(XYBassAnalysisTests PRIVATE /utf-8)
+    target_compile_options(XYBassAnalysisTests PRIVATE /utf-8 /arch:AVX)
 endif()
 
 add_test(NAME xy-bass-analysis COMMAND XYBassAnalysisTests)
@@ -189,7 +189,7 @@ target_link_libraries(XYBassMaterialTests
 )
 
 if(MSVC)
-    target_compile_options(XYBassMaterialTests PRIVATE /utf-8)
+    target_compile_options(XYBassMaterialTests PRIVATE /utf-8 /arch:AVX)
 endif()
 
 add_test(NAME xy-bass-material COMMAND XYBassMaterialTests)
@@ -221,7 +221,7 @@ target_link_libraries(XYBassPerformanceTests
 )
 
 if(MSVC)
-    target_compile_options(XYBassPerformanceTests PRIVATE /utf-8)
+    target_compile_options(XYBassPerformanceTests PRIVATE /utf-8 /arch:AVX)
 endif()
 
 add_test(NAME xy-bass-performance COMMAND XYBassPerformanceTests)
@@ -258,7 +258,7 @@ target_link_libraries(XYBassPluginTests
 )
 
 if(MSVC)
-    target_compile_options(XYBassPluginTests PRIVATE /utf-8)
+    target_compile_options(XYBassPluginTests PRIVATE /utf-8 /arch:AVX)
 endif()
 
 add_test(NAME xy-bass-plugin COMMAND XYBassPluginTests)
