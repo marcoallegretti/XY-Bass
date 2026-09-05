@@ -25,9 +25,16 @@ XYBassEditor::XYBassEditor (XYBassProcessor& owner)
     addAndMakeVisible (pad);
     pad.onContextMenu = [this] { showContextMenu(); };
 
-    configureRotary (inputSlider, inputLabel, "INPUT");
-    configureRotary (mixSlider, mixLabel, "MIX");
-    configureRotary (outputSlider, outputLabel, "OUTPUT");
+    configureRotary (inputSlider, inputLabel, "INPUT", xyb::ids::input,
+                     "Level into the processing. Double-click to reset.");
+    configureRotary (mixSlider, mixLabel, "MIX", xyb::ids::mix,
+                     "Blend of the generated low end against the dry signal.");
+    configureRotary (outputSlider, outputLabel, "OUTPUT", xyb::ids::output,
+                     "Level after processing.");
+
+    autoGainButton.setTooltip ("Match the processed level to the input level.");
+    deltaButton.setTooltip ("Listen to the generated low end on its own.");
+    bypassButton.setTooltip ("Pass the input through unprocessed, latency compensated.");
 
     for (auto* button : { &autoGainButton, &deltaButton, &bypassButton })
         addAndMakeVisible (button);
@@ -56,11 +63,17 @@ XYBassEditor::~XYBassEditor()
     setLookAndFeel (nullptr);
 }
 
-void XYBassEditor::configureRotary (juce::Slider& slider, juce::Label& label, const juce::String& text)
+void XYBassEditor::configureRotary (juce::Slider& slider, juce::Label& label, const juce::String& text,
+                                    const juce::String& parameterId, const juce::String& tip)
 {
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 17);
     slider.setTitle (text);
+    slider.setTooltip (tip);
+
+    if (auto* parameter = processor.getValueTreeState().getParameter (parameterId))
+        slider.setDoubleClickReturnValue (true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
+
     addAndMakeVisible (slider);
 
     label.setText (text, juce::dontSendNotification);
@@ -176,8 +189,13 @@ void XYBassEditor::paint (juce::Graphics& g)
 void XYBassEditor::resized()
 {
     auto stored = processor.getValueTreeState().state;
-    stored.setProperty ("editorWidth", getWidth(), nullptr);
-    stored.setProperty ("editorHeight", getHeight(), nullptr);
+
+    if ((int) stored.getProperty ("editorWidth", 0) != getWidth()
+        || (int) stored.getProperty ("editorHeight", 0) != getHeight())
+    {
+        stored.setProperty ("editorWidth", getWidth(), nullptr);
+        stored.setProperty ("editorHeight", getHeight(), nullptr);
+    }
 
     auto bounds = getLocalBounds();
     const auto header = bounds.removeFromTop (46);

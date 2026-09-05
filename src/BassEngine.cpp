@@ -91,6 +91,7 @@ void BassEngine::prepare (double sampleRate, int maximumBlockSize, int numChanne
     autoGainSmoother.prepare (sampleRate, 60.0f);
     coreWeight.prepare (sampleRate, 250.0f);
     transientDepthControl.prepare (sampleRate, 120.0f);
+    spreadControl.prepare (sampleRate, 45.0f);
 
     reset();
 }
@@ -147,6 +148,7 @@ void BassEngine::reset()
     subsonicControl.snapTo (16.0f);
     autoGainSmoother.snapTo (1.0f);
     transientDepthControl.snapTo (0.0f);
+    spreadControl.snapTo (0.0f);
     coreWeight.snapTo (0.0f);
 
     smoothedSubsonic = 16.0f;
@@ -171,6 +173,7 @@ void BassEngine::updateControls (int numSamples)
     clippingControl.setTarget (targets.clipping);
     protectionControl.setTarget (targets.fundamentalProtection);
     transientDepthControl.setTarget (targets.transientDepth);
+    spreadControl.setTarget (targets.harmonicSpread);
     coreWeight.setTarget (juce::jlimit (0.0f, 1.0f, -features.correlation));
 
     splitter.setCrossovers (bassCrossoverControl.advance (numSamples), kCharacterCrossover);
@@ -322,7 +325,7 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         const auto protection = protectionControl.next();
 
         const auto balance = (leftLevel - rightLevel) / juce::jmax (leftLevel + rightLevel, 1.0e-5f);
-        const auto spread = juce::jlimit (-0.85f, 0.85f, balance * targets.harmonicSpread);
+        const auto spread = juce::jlimit (-0.85f, 0.85f, balance * spreadControl.next());
 
         float saturationMono = 0.0f;
 

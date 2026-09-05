@@ -101,7 +101,7 @@ private:
     SmoothedScalar inputGain, outputGain, mixAmount, monoAmount, driveControl;
     SmoothedScalar asymmetryControl, clippingControl, protectionControl, normalisationLevel;
     SmoothedScalar bassCrossoverControl, subsonicControl;
-    SmoothedScalar autoGainSmoother, transientDepthControl, coreWeight;
+    SmoothedScalar autoGainSmoother, transientDepthControl, coreWeight, spreadControl;
 
     int preparedChannels = 2;
     int preparedBlockSize = 512;

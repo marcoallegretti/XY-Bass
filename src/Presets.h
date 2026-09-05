@@ -10,6 +10,7 @@ struct Preset
     const char* name;
     float x;
     float y;
+    float input;
     float mix;
     float output;
     bool autoGain;

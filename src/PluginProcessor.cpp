@@ -202,6 +202,10 @@ void XYBassProcessor::setCurrentProgram (int index)
     yParameter->setValueNotifyingHost (preset.y);
     yParameter->endChangeGesture();
 
+    inputParameter->beginChangeGesture();
+    inputParameter->setValueNotifyingHost (inputParameter->convertTo0to1 (preset.input));
+    inputParameter->endChangeGesture();
+
     mixParameter->beginChangeGesture();
     mixParameter->setValueNotifyingHost (mixParameter->convertTo0to1 (preset.mix));
     mixParameter->endChangeGesture();
@@ -232,6 +236,7 @@ void XYBassProcessor::changeProgramName (int, const juce::String&)
 void XYBassProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
+    state.setProperty ("stateVersion", 1, nullptr);
     state.setProperty ("program", currentProgram, nullptr);
 
     if (auto xml = state.createXml())
@@ -246,7 +251,11 @@ void XYBassProcessor::setStateInformation (const void* data, int sizeInBytes)
         return;
 
     auto state = juce::ValueTree::fromXml (*xml);
-    currentProgram = (int) state.getProperty ("program", 0);
+
+    if ((int) state.getProperty ("stateVersion", 1) > 1)
+        return;
+
+    currentProgram = juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("program", 0));
     parameters.replaceState (state);
 }
 

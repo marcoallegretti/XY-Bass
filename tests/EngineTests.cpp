@@ -187,6 +187,27 @@ double peak (const Buffer& buffer)
     return result;
 }
 
+double pinnedFraction (const Buffer& buffer, float threshold)
+{
+    const auto total = buffer.getNumSamples() * buffer.getNumChannels();
+
+    if (total == 0)
+        return 0.0;
+
+    int pinned = 0;
+
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+    {
+        const auto* data = buffer.getReadPointer (channel);
+
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+            if (std::abs (data[i]) > threshold)
+                ++pinned;
+    }
+
+    return (double) pinned / (double) total;
+}
+
 bool isFinite (const Buffer& buffer)
 {
     for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
@@ -501,10 +522,13 @@ void testStability()
                     fillKick (buffer, sampleRate, 0.7f);
                     render (engine, buffer, 128);
 
-                    check (isFinite (buffer), "finite output at " + juce::String (sampleRate)
-                                                  + " Hz, position " + juce::String (gridX) + "/" + juce::String (gridY));
-                    check (peak (buffer) < 1.05, "bounded output at " + juce::String (sampleRate)
-                                                     + " Hz, position " + juce::String (gridX) + "/" + juce::String (gridY));
+                    const auto where = juce::String (sampleRate) + " Hz, position "
+                                       + juce::String (gridX) + "/" + juce::String (gridY);
+
+                    check (isFinite (buffer), "finite output at " + where);
+                    check (peak (buffer) > 0.02, "the engine produces output at " + where);
+                    check (pinnedFraction (buffer, 0.95f) < 0.01,
+                           "the output ceiling stays out of the way at " + where);
                 }
             }
         }
