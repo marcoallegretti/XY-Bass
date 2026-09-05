@@ -1073,6 +1073,9 @@ void testAliasing()
     const auto dirtySub = measureAliasing (0.0f, 1.0f, 48000.0, 137.0);
     const auto highDirty = measureAliasing (1.0f, 1.0f, 48000.0, 287.0);
     const auto highDirtySub = measureAliasing (0.2f, 1.0f, 48000.0, 287.0);
+    const auto baseRateDirty = measureAliasing (1.0f, 1.0f, 44100.0, 287.0);
+    const auto baseRateDirtySub = measureAliasing (0.2f, 1.0f, 44100.0, 287.0);
+    const auto topNoteDirty = measureAliasing (1.0f, 1.0f, 44100.0, 392.0);
 
     report ("measurement floor", floorLevel);
     report ("clean translate stray energy", cleanTranslate);
@@ -1086,6 +1089,14 @@ void testAliasing()
     check (dirtySub < -52.0, "dirty sub keeps alias products far below the harmonics");
     check (highDirty < -48.0, "a high bass note still keeps alias products far below the harmonics");
     check (highDirtySub < -48.0, "a high saturated note keeps alias products far below the harmonics");
+
+    report ("44.1 kHz dirty translate stray energy", baseRateDirty);
+    report ("44.1 kHz dirty sub stray energy", baseRateDirtySub);
+    report ("44.1 kHz top note stray energy", topNoteDirty);
+
+    check (baseRateDirty < -48.0, "the lowest supported rate keeps alias products far below the harmonics");
+    check (baseRateDirtySub < -48.0, "the lowest supported rate keeps sub alias products down");
+    check (topNoteDirty < -46.0, "the top of the tracked range stays clean at the lowest supported rate");
 }
 
 void testSampleRateConsistency()
