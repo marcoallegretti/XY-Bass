@@ -1,7 +1,12 @@
 #include "BassEngine.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
+
+#if JUCE_WINDOWS
+ #include <windows.h>
+#endif
 
 namespace
 {
@@ -14,6 +19,69 @@ void countAllocation() noexcept
     if (allocationTracking.load (std::memory_order_relaxed))
         allocationCount.fetch_add (1, std::memory_order_relaxed);
 }
+
+#if JUCE_WINDOWS
+
+void* (*realMalloc) (size_t) = std::malloc;
+void* (*realCalloc) (size_t, size_t) = std::calloc;
+void* (*realRealloc) (void*, size_t) = std::realloc;
+
+void* trackedMalloc (size_t size) { countAllocation(); return realMalloc (size); }
+void* trackedCalloc (size_t count, size_t size) { countAllocation(); return realCalloc (count, size); }
+void* trackedRealloc (void* pointer, size_t size) { countAllocation(); return realRealloc (pointer, size); }
+
+void redirectImport (const char* name, void* replacement, void** original)
+{
+    auto* base = (BYTE*) GetModuleHandleW (nullptr);
+    auto* dos = (IMAGE_DOS_HEADER*) base;
+    auto* nt = (IMAGE_NT_HEADERS*) (base + dos->e_lfanew);
+    const auto directory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+
+    if (directory.Size == 0)
+        return;
+
+    for (auto* descriptor = (IMAGE_IMPORT_DESCRIPTOR*) (base + directory.VirtualAddress);
+         descriptor->Name != 0; ++descriptor)
+    {
+        const auto namesRva = descriptor->OriginalFirstThunk != 0 ? descriptor->OriginalFirstThunk
+                                                                  : descriptor->FirstThunk;
+        auto* names = (IMAGE_THUNK_DATA*) (base + namesRva);
+        auto* addresses = (IMAGE_THUNK_DATA*) (base + descriptor->FirstThunk);
+
+        for (; names->u1.AddressOfData != 0; ++names, ++addresses)
+        {
+            if ((names->u1.Ordinal & IMAGE_ORDINAL_FLAG) != 0)
+                continue;
+
+            const auto* import = (IMAGE_IMPORT_BY_NAME*) (base + names->u1.AddressOfData);
+
+            if (std::strcmp (import->Name, name) != 0)
+                continue;
+
+            DWORD previous = 0;
+
+            if (VirtualProtect (&addresses->u1.Function, sizeof (void*), PAGE_READWRITE, &previous))
+            {
+                *original = (void*) addresses->u1.Function;
+                addresses->u1.Function = (ULONGLONG) (uintptr_t) replacement;
+                VirtualProtect (&addresses->u1.Function, sizeof (void*), previous, &previous);
+            }
+        }
+    }
+}
+
+void installAllocationHooks()
+{
+    redirectImport ("malloc", (void*) trackedMalloc, (void**) &realMalloc);
+    redirectImport ("calloc", (void*) trackedCalloc, (void**) &realCalloc);
+    redirectImport ("realloc", (void*) trackedRealloc, (void**) &realRealloc);
+}
+
+#else
+
+void installAllocationHooks() {}
+
+#endif
 
 int failures = 0;
 int checks = 0;
@@ -1245,6 +1313,17 @@ void testRealtimeSafety()
 
     report ("allocations during processing", allocationCount.load());
     check (allocationCount.load() == 0, "the audio path performs no allocation");
+
+    allocationCount.store (0);
+    allocationTracking.store (true);
+    {
+        juce::AudioBuffer<float> probe (2, 256);
+        probe.clear();
+    }
+    allocationTracking.store (false);
+
+    report ("allocations seen for a probe buffer", allocationCount.load());
+    check (allocationCount.load() > 0, "the allocation counter sees an audio buffer being sized");
 }
 
 } // namespace
@@ -1268,6 +1347,8 @@ void operator delete[] (void* pointer, size_t) noexcept { std::free (pointer); }
 
 int main()
 {
+    installAllocationHooks();
+
     testShaperCharacter();
     testBandReconstruction();
     testStability();
