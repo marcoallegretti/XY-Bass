@@ -78,7 +78,6 @@ target_compile_definitions(XYBass
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_WEB_BROWSER=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
 target_link_libraries(XYBass
@@ -118,7 +117,6 @@ target_compile_definitions(XYBassTests
     PRIVATE
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
 target_link_libraries(XYBassTests
@@ -150,7 +148,6 @@ target_compile_definitions(XYBassAnalysisTests
     PRIVATE
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
 target_link_libraries(XYBassAnalysisTests
@@ -182,7 +179,6 @@ target_compile_definitions(XYBassMaterialTests
     PRIVATE
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
 target_link_libraries(XYBassMaterialTests
@@ -214,7 +210,6 @@ target_compile_definitions(XYBassPerformanceTests
     PRIVATE
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
 target_link_libraries(XYBassPerformanceTests
@@ -252,7 +247,6 @@ target_compile_definitions(XYBassPluginTests
         $<TARGET_PROPERTY:XYBass,INTERFACE_COMPILE_DEFINITIONS>
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
 target_link_libraries(XYBassPluginTests

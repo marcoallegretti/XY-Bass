@@ -9,6 +9,19 @@ juce::String describeNote (float frequency)
     const auto midi = juce::roundToInt (69.0 + 12.0 * std::log2 ((double) frequency / 440.0));
     return juce::String (names[((midi % 12) + 12) % 12]) + juce::String (midi / 12 - 1);
 }
+juce::String aboutText()
+{
+   #ifdef JucePlugin_VersionString
+    const juce::String version { " " JucePlugin_VersionString };
+   #else
+    const juce::String version;
+   #endif
+
+    return "XY Bass" + version + "\n23DSP\n\n"
+           "Licensed under the GNU Affero General Public License, version 3.\n"
+           "This program comes with absolutely no warranty.\n"
+           "The complete source code is available under the terms of that licence.";
+}
 } // namespace
 
 XYBassEditor::XYBassEditor (XYBassProcessor& owner)
@@ -282,6 +295,8 @@ void XYBassEditor::showContextMenu()
         presets.addItem (100 + i, factory[(size_t) i].name, true, processor.getCurrentProgram() == i);
 
     menu.addSubMenu ("Presets", presets);
+    menu.addSeparator();
+    menu.addItem (2, "About");
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&pad),
                         [this] (int result)
@@ -297,6 +312,17 @@ void XYBassEditor::showContextMenu()
                                         parameter->setValueNotifyingHost (0.5f);
                                         parameter->endChangeGesture();
                                     }
+                            }
+                            else if (result == 2)
+                            {
+                                juce::NativeMessageBox::showAsync (
+                                    juce::MessageBoxOptions()
+                                        .withIconType (juce::MessageBoxIconType::NoIcon)
+                                        .withTitle ("XY Bass")
+                                        .withMessage (aboutText())
+                                        .withButton ("Close")
+                                        .withAssociatedComponent (this),
+                                    nullptr);
                             }
                             else if (result >= 100)
                             {
