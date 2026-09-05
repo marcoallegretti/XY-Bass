@@ -33,8 +33,8 @@ private:
 
     SmoothedScalar reinforcement, reconstruction, subharmonic, centre, oscillatorFrequency;
 
-    double phase = 0.0;
-    double subharmonicPhase = 0.0;
+    QuadratureOscillator reconstructionOscillator;
+    QuadratureOscillator subharmonicOscillator;
     float sampleRate = 44100.0f;
 
 

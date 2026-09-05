@@ -105,6 +105,57 @@ private:
     float target = 0.0f;
 };
 
+class QuadratureOscillator
+{
+public:
+    void prepare (double newSampleRate) noexcept
+    {
+        sampleRate = (float) newSampleRate;
+        reset();
+    }
+
+    void reset() noexcept
+    {
+        real = 1.0f;
+        imaginary = 0.0f;
+    }
+
+    void setFrequency (float frequencyHz) noexcept
+    {
+        const auto limited = juce::jlimit (0.0f, sampleRate * 0.49f, frequencyHz);
+        const auto increment = juce::MathConstants<float>::twoPi * limited / sampleRate;
+        cosineStep = std::cos (increment);
+        sineStep = std::sin (increment);
+    }
+
+    void advance() noexcept
+    {
+        const auto nextReal = real * cosineStep - imaginary * sineStep;
+        const auto nextImaginary = real * sineStep + imaginary * cosineStep;
+        const auto correction = 1.5f - 0.5f * (nextReal * nextReal + nextImaginary * nextImaginary);
+
+        real = flushDenormal (nextReal * correction);
+        imaginary = flushDenormal (nextImaginary * correction);
+    }
+
+    void nudge (float radians) noexcept
+    {
+        const auto nextReal = real - radians * imaginary;
+        imaginary = imaginary + radians * real;
+        real = nextReal;
+    }
+
+    float sine() const noexcept { return imaginary; }
+    float cosine() const noexcept { return real; }
+
+private:
+    float sampleRate = 44100.0f;
+    float cosineStep = 1.0f;
+    float sineStep = 0.0f;
+    float real = 1.0f;
+    float imaginary = 0.0f;
+};
+
 class DcBlocker
 {
 public:

@@ -3,6 +3,11 @@
 namespace xyb
 {
 
+namespace
+{
+constexpr float kLockGain = 0.19f;
+}
+
 void SubEngine::prepare (double newSampleRate)
 {
     sampleRate = (float) newSampleRate;
@@ -32,6 +37,9 @@ void SubEngine::prepare (double newSampleRate)
     centre.prepare (newSampleRate, 160.0f);
     oscillatorFrequency.prepare (newSampleRate, 90.0f);
 
+    reconstructionOscillator.prepare (newSampleRate);
+    subharmonicOscillator.prepare (newSampleRate);
+
     reset();
 }
 
@@ -50,8 +58,10 @@ void SubEngine::reset()
     centre.snapTo (55.0f);
     oscillatorFrequency.snapTo (55.0f);
 
-    phase = 0.0;
-    subharmonicPhase = 0.0;
+    reconstructionOscillator.reset();
+    reconstructionOscillator.setFrequency (55.0f);
+    subharmonicOscillator.reset();
+    subharmonicOscillator.setFrequency (27.5f);
     compressiveGain = 1.0f;
     compressiveIncrement = 0.0f;
     trackedFrequency = 55.0f;
@@ -78,6 +88,10 @@ void SubEngine::updateBlock (int numSamples) noexcept
     compressiveIncrement = (target - compressiveGain) / (float) juce::jmax (1, numSamples);
 
     reinforcementBand.setCutoff (centre.advance (numSamples));
+
+    const auto frequency = oscillatorFrequency.advance (numSamples);
+    reconstructionOscillator.setFrequency (frequency);
+    subharmonicOscillator.setFrequency (frequency * 0.5f);
 }
 
 float SubEngine::process (float monoLow, float fundamentalBand, float fundamentalMagnitude,
@@ -98,47 +112,32 @@ float SubEngine::process (float monoLow, float fundamentalBand, float fundamenta
 
     if (reconstructionAmount > 1.0e-4f)
     {
-        const auto frequency = oscillatorFrequency.next();
-        phase += (double) frequency / (double) sampleRate;
+        reconstructionOscillator.advance();
 
-        const auto angle = (float) (phase * juce::MathConstants<double>::twoPi);
-        const auto oscillator = std::sin (angle);
+        const auto oscillator = reconstructionOscillator.sine();
         const auto inverse = 1.0f / juce::jmax (fundamentalMagnitude, 1.0e-6f);
         const auto lock = juce::jlimit (0.0f, 1.0f, fundamentalMagnitude * 260.0f);
-        const auto error = fundamentalBand * inverse * std::cos (angle)
+        const auto error = fundamentalBand * inverse * reconstructionOscillator.cosine()
                            - fundamentalQuadrature * inverse * oscillator;
 
-        phase += (double) (0.03f * lock * error);
-
-        if (phase >= 1.0)
-            phase -= 1.0;
-        else if (phase < 0.0)
-            phase += 1.0;
+        reconstructionOscillator.nudge (kLockGain * lock * error);
 
         synthesised += oscillator * lowLevel * reconstructionAmount * 1.5f * compressiveGain;
     }
     else
     {
-        oscillatorFrequency.next();
-        phase = 0.0;
+        reconstructionOscillator.reset();
     }
 
     if (subharmonicAmount > 1.0e-4f)
     {
-        subharmonicPhase += 0.5 * (double) oscillatorFrequency.getCurrent() / (double) sampleRate;
-
-        if (subharmonicPhase >= 1.0)
-            subharmonicPhase -= 1.0;
-
-        const auto oscillator = std::sin ((float) (subharmonicPhase * juce::MathConstants<double>::twoPi));
-        synthesised += oscillator * fundamentalLevel * subharmonicAmount * 0.9f;
+        subharmonicOscillator.advance();
+        synthesised += subharmonicOscillator.sine() * fundamentalLevel * subharmonicAmount * 0.9f;
     }
     else
     {
-        subharmonicPhase = 0.0;
+        subharmonicOscillator.reset();
     }
-
-    juce::ignoreUnused (fundamentalBand);
 
     const auto generated = dcBlocker.process (reinforced + synthesised);
     const auto bounded = outputLimitBand.processLowPass (generated);
