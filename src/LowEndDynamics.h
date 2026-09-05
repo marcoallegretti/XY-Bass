@@ -46,13 +46,13 @@ public:
         const auto average = reference.next();
 
         constexpr float knee = 9.0f;
-        const auto reference = juce::jmax (average, 2.0e-4f);
+        const auto baseline = juce::jmax (average, 2.0e-4f);
         float targetReduction = 0.0f;
 
-        if (level > reference * kneeEntry)
+        if (level > baseline * kneeEntry)
         {
             const auto ratio = 1.0f + amount * 2.6f;
-            const auto thresholdDb = juce::Decibels::gainToDecibels (reference) + 3.5f;
+            const auto thresholdDb = juce::Decibels::gainToDecibels (baseline) + 3.5f;
             const auto levelDb = juce::Decibels::gainToDecibels (level);
             const auto over = levelDb - thresholdDb;
             const auto slope = 1.0f - 1.0f / ratio;

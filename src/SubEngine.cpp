@@ -80,7 +80,8 @@ void SubEngine::updateBlock (int numSamples) noexcept
     reinforcementBand.setCutoff (centre.advance (numSamples));
 }
 
-float SubEngine::process (float monoLow, float fundamentalBand, float fundamentalMagnitude) noexcept
+float SubEngine::process (float monoLow, float fundamentalBand, float fundamentalMagnitude,
+                          float fundamentalQuadrature) noexcept
 {
     const auto reinforcementAmount = reinforcement.next();
     const auto reconstructionAmount = reconstruction.next();
@@ -100,10 +101,20 @@ float SubEngine::process (float monoLow, float fundamentalBand, float fundamenta
         const auto frequency = oscillatorFrequency.next();
         phase += (double) frequency / (double) sampleRate;
 
+        const auto angle = (float) (phase * juce::MathConstants<double>::twoPi);
+        const auto oscillator = std::sin (angle);
+        const auto inverse = 1.0f / juce::jmax (fundamentalMagnitude, 1.0e-6f);
+        const auto lock = juce::jlimit (0.0f, 1.0f, fundamentalMagnitude * 260.0f);
+        const auto error = fundamentalBand * inverse * std::cos (angle)
+                           - fundamentalQuadrature * inverse * oscillator;
+
+        phase += (double) (0.03f * lock * error);
+
         if (phase >= 1.0)
             phase -= 1.0;
+        else if (phase < 0.0)
+            phase += 1.0;
 
-        const auto oscillator = std::sin ((float) (phase * juce::MathConstants<double>::twoPi));
         synthesised += oscillator * lowLevel * reconstructionAmount * 1.5f * compressiveGain;
     }
     else

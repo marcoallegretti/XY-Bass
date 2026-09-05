@@ -307,8 +307,9 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
 
         const auto fundamentalBand = translateEngine.extractFundamental (monoLow);
         const auto subBus = subEngine.process (monoLow, fundamentalBand,
-                                              translateEngine.getFundamentalMagnitude());
-        const auto harmonicBus = translateEngine.process (fundamentalBand, monoLow);
+                                              translateEngine.getFundamentalMagnitude(),
+                                              translateEngine.getFundamentalQuadrature());
+        const auto harmonicBus = translateEngine.process (fundamentalBand);
 
         const auto attack = transientFast.process (monoInput);
         const auto sustain = transientSlow.process (monoInput);

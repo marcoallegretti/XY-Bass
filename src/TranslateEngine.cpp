@@ -53,6 +53,7 @@ void TranslateEngine::reset()
     wideEnvelope.reset();
     outputMeter.reset();
     narrowMagnitude = 0.0f;
+    narrowQuadrature = 0.0f;
     wideMagnitude = 0.0f;
     wideBand = 0.0f;
     dcBlocker.reset();
@@ -139,8 +140,8 @@ float TranslateEngine::extractFundamental (float monoLow) noexcept
 
     const auto scale = narrowExtractor.getNormalisedBandwidth();
     const auto inPhase = band * scale;
-    const auto quadrature = low * scale;
-    narrowMagnitude = std::sqrt (inPhase * inPhase + quadrature * quadrature);
+    narrowQuadrature = low * scale;
+    narrowMagnitude = std::sqrt (inPhase * inPhase + narrowQuadrature * narrowQuadrature);
 
     wideExtractor.process (monoLow, low, band, high);
 
@@ -152,7 +153,7 @@ float TranslateEngine::extractFundamental (float monoLow) noexcept
     return inPhase;
 }
 
-float TranslateEngine::process (float fundamentalBand, float monoLow) noexcept
+float TranslateEngine::process (float fundamentalBand) noexcept
 {
     const auto amount = amountSmoother.next();
     const auto confidence = confidenceSmoother.next();

@@ -420,6 +420,92 @@ void testMeterRanges()
     check (centre.confidence > 0.55f, "the readout only appears when the tracker is confident");
 }
 
+void testReconstructionStability()
+{
+    section ("reconstruction stability");
+
+    const auto sampleRate = 48000.0;
+    const auto length = (int) (sampleRate * 8.0);
+
+    auto source = makeBuffer (2, length);
+    addSine (source, 110.0, sampleRate, 0.09f);
+    addSine (source, 220.0, sampleRate, 0.24f);
+    addSine (source, 330.0, sampleRate, 0.20f);
+    addSine (source, 440.0, sampleRate, 0.14f);
+
+    const auto processed = process (source, 0.0f, 0.2f, sampleRate, false);
+    const auto mono = midOf (processed);
+
+    xyb::TptSvf probe;
+    probe.prepare (sampleRate);
+    probe.setQ (3.0f);
+    probe.setCutoff (110.0f);
+
+    xyb::EnvelopeFollower follower;
+    follower.prepare (sampleRate);
+    follower.setTimes (30.0f, 30.0f);
+
+    std::vector<float> envelope;
+    const auto settle = (int) (sampleRate * 3.0);
+
+    for (int i = 0; i < length; ++i)
+    {
+        const auto band = probe.processBandPass (mono[(size_t) i]);
+        const auto level = follower.process (band);
+
+        if (i >= settle)
+            envelope.push_back (level);
+    }
+
+    std::vector<float> sorted (envelope);
+    std::sort (sorted.begin(), sorted.end());
+
+    const auto low = sorted[(size_t) ((double) sorted.size() * 0.05)];
+    const auto high = sorted[(size_t) ((double) sorted.size() * 0.95)];
+    const auto swing = relativeDb (high, juce::jmax ((double) low, 1.0e-9));
+
+    const auto dryFundamental = magnitudeAt (midOf (source).data() + settle, length - settle, 110.0, sampleRate);
+    const auto wetFundamental = magnitudeAt (mono.data() + settle, length - settle, 110.0, sampleRate);
+
+    report ("reconstruction gain at the fundamental", relativeDb (wetFundamental, dryFundamental));
+    report ("fundamental envelope swing", swing);
+
+    check (relativeDb (wetFundamental, dryFundamental) > 1.0,
+           "reconstruction actually reinforces a weak fundamental");
+    check (swing < 3.0, "the reinforced fundamental does not beat against the source");
+
+    auto rooted = makeBuffer (2, (int) (sampleRate * 5.0));
+    addSine (rooted, 45.0, sampleRate, 0.07f);
+    addSine (rooted, 90.0, sampleRate, 0.24f);
+    addSine (rooted, 135.0, sampleRate, 0.20f);
+    addSine (rooted, 180.0, sampleRate, 0.14f);
+
+    Buffer inverted (rooted);
+
+    for (int channel = 0; channel < 2; ++channel)
+        for (int i = 0; i < inverted.getNumSamples(); ++i)
+            inverted.setSample (channel, i, -inverted.getSample (channel, i));
+
+    const auto positive = process (rooted, 0.0f, 0.0f, sampleRate, false);
+    const auto negative = process (inverted, 0.0f, 0.0f, sampleRate, false);
+
+    const auto from = (int) (sampleRate * 3.0);
+    double asymmetryError = 0.0;
+    double reference = 0.0;
+
+    for (int i = from; i < positive.getNumSamples(); ++i)
+    {
+        reference = juce::jmax (reference, (double) std::abs (positive.getSample (0, i)));
+        asymmetryError = juce::jmax (asymmetryError, (double) std::abs (positive.getSample (0, i)
+                                                                        + negative.getSample (0, i)));
+    }
+
+    report ("polarity asymmetry", relativeDb (asymmetryError, juce::jmax (reference, 1.0e-9)));
+
+    check (relativeDb (asymmetryError, juce::jmax (reference, 1.0e-9)) < -40.0,
+           "all generated low end follows the polarity of the source");
+}
+
 void testDcAndSubsonic()
 {
     section ("dc and subsonic rejection");
@@ -470,6 +556,7 @@ int main()
     testStereoPreservation();
     testSpectralBalance();
     testLevelMatching();
+    testReconstructionStability();
     testMeterRanges();
     testPathologicalMaterial();
     testDcAndSubsonic();

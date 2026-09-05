@@ -16,7 +16,8 @@ public:
 
     void updateBlock (int numSamples) noexcept;
 
-    float process (float monoLow, float fundamentalBand, float fundamentalMagnitude) noexcept;
+    float process (float monoLow, float fundamentalBand, float fundamentalMagnitude,
+                   float fundamentalQuadrature) noexcept;
 
     float getReinforcementLevel() const noexcept { return reinforcementMeter.getValue(); }
     float getSynthesisLevel() const noexcept { return synthesisMeter.getValue(); }

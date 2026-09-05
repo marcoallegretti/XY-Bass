@@ -17,11 +17,12 @@ public:
     void updateBlock (int numSamples) noexcept;
 
     float extractFundamental (float monoLow) noexcept;
-    float process (float fundamentalBand, float monoLow) noexcept;
+    float process (float fundamentalBand) noexcept;
 
     float getHarmonicWeight (int index) const noexcept { return harmonicWeights[(size_t) index]; }
     float getOutputLevel() const noexcept { return outputMeter.getValue(); }
     float getFundamentalMagnitude() const noexcept { return narrowMagnitude; }
+    float getFundamentalQuadrature() const noexcept { return narrowQuadrature; }
 
 private:
     void refreshWeights (int numSamples) noexcept;
@@ -50,6 +51,7 @@ private:
     float weightNormalisation = 1.0f;
     float normalisationIncrement = 0.0f;
     float narrowMagnitude = 0.0f;
+    float narrowQuadrature = 0.0f;
     float wideMagnitude = 0.0f;
     float wideBand = 0.0f;
 };
