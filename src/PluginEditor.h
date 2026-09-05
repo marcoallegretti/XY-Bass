@@ -30,6 +30,7 @@ private:
     float chassisScale = 1.0f;
 
     juce::Rectangle<float> readoutBounds;
+    juce::Rectangle<float> meterBounds;
     juce::Rectangle<float> shelfBounds;
 
     juce::Slider inputSlider, mixSlider, outputSlider;
@@ -45,6 +46,8 @@ private:
     std::unique_ptr<ButtonAttachment> autoGainAttachment, deltaAttachment, bypassAttachment;
 
     juce::String readout;
+    float meterLevel = 0.0f;
+    float clipLevel = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (XYBassEditor)
 };

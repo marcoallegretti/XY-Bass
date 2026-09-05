@@ -9,6 +9,7 @@ static constexpr float kNormalisationExponent = 0.7f;
 
 void BassEngine::prepare (double sampleRate, int maximumBlockSize, int numChannels)
 {
+    currentSampleRate = sampleRate;
     preparedChannels = juce::jlimit (1, 2, numChannels);
     preparedBlockSize = juce::jmax (16, maximumBlockSize);
 
@@ -149,6 +150,7 @@ void BassEngine::reset()
     coreWeight.snapTo (0.0f);
 
     smoothedSubsonic = 16.0f;
+    ceilingHold = 0.0f;
 }
 
 void BassEngine::updateControls (int numSamples)
@@ -386,6 +388,7 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
     dryDelay.process (dryBuffer, numSamples);
 
     bool invalid = false;
+    bool ceilingActive = false;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -424,12 +427,16 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
             const auto dry = dryBuffer.getReadPointer (channel)[i];
             const auto processed = wet[channel] * autoGainValue;
 
-            auto result = (processed - dry) * mixValue;
+            const auto contribution = softClip ((processed - dry) * mixValue, 0.9f);
 
-            if (! parameters.delta)
-                result += dry;
+            auto result = parameters.delta ? contribution : dry + contribution;
+            result *= outputValue;
 
-            result = softClip (result * outputValue, 0.9f);
+            if (std::abs (result) > 1.0f)
+            {
+                result = softClip (result, 0.9f);
+                ceilingActive = true;
+            }
 
             if (! (std::abs (result) < 1.0e6f))
             {
@@ -445,6 +452,8 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
 
     spectralBalance.updateBlock (numSamples);
     autoGain.updateBlock (numSamples);
+
+    ceilingHold = ceilingActive ? 1.0f : juce::jmax (0.0f, ceilingHold - (float) numSamples / (float) juce::jmax (1, (int) (0.35 * currentSampleRate)));
 
     for (int channel = numChannels; channel < buffer.getNumChannels(); ++channel)
         buffer.clear (channel, 0, buffer.getNumSamples());
@@ -475,6 +484,7 @@ void BassEngine::publishMeters()
     meters.harmonicGeneration.store (translateEngine.getOutputLevel(), std::memory_order_relaxed);
     meters.drive.store (driveControl.getCurrent(), std::memory_order_relaxed);
     meters.outputLevel.store (outputEnvelope.getValue(), std::memory_order_relaxed);
+    meters.ceiling.store (ceilingHold, std::memory_order_relaxed);
     meters.harmonicTwo.store (translateEngine.getHarmonicWeight (0), std::memory_order_relaxed);
     meters.harmonicThree.store (translateEngine.getHarmonicWeight (1), std::memory_order_relaxed);
     meters.harmonicFour.store (translateEngine.getHarmonicWeight (2), std::memory_order_relaxed);

@@ -45,6 +45,11 @@ XYPad::~XYPad()
     stopTimer();
 }
 
+void XYPad::setEngagement (float amount) noexcept
+{
+    engagement = juce::jlimit (0.0f, 1.0f, amount);
+}
+
 juce::Rectangle<float> XYPad::getScreenBounds() const
 {
     return getLocalBounds().toFloat().reduced (kBezel);
@@ -171,6 +176,8 @@ void XYPad::timerCallback()
     smoothedWeights[2] = approach (smoothedWeights[2], meters.harmonicFour.load (std::memory_order_relaxed), 0.2f);
     smoothedWeights[3] = approach (smoothedWeights[3], meters.harmonicFive.load (std::memory_order_relaxed), 0.2f);
 
+    smoothedEngagement = approach (smoothedEngagement, engagement, 0.25f);
+
     wavePhase += smoothedFundamental / (30.0f * 9.0f);
     wavePhase -= std::floor (wavePhase);
 
@@ -218,7 +225,7 @@ void XYPad::paint (juce::Graphics& g)
 
 void XYPad::paintWaves (juce::Graphics& g, juce::Rectangle<float> area)
 {
-    const auto energy = xyb::meterDisplay (smoothedLowLevel, -42.0f);
+    const auto energy = xyb::meterDisplay (smoothedLowLevel, -42.0f) * smoothedEngagement;
 
     if (energy < 0.02f)
         return;
@@ -259,7 +266,7 @@ void XYPad::paintWaves (juce::Graphics& g, juce::Rectangle<float> area)
 
 void XYPad::paintHarmonics (juce::Graphics& g, juce::Rectangle<float> area)
 {
-    const auto level = xyb::meterDisplay (smoothedHarmonicLevel, -54.0f);
+    const auto level = xyb::meterDisplay (smoothedHarmonicLevel, -54.0f) * smoothedEngagement;
 
     if (level < 0.02f || smoothedFundamental < 20.0f)
         return;
@@ -287,7 +294,7 @@ void XYPad::paintHarmonics (juce::Graphics& g, juce::Rectangle<float> area)
 
 void XYPad::paintTexture (juce::Graphics& g, juce::Rectangle<float> area)
 {
-    const auto drive = juce::jlimit (0.0f, 1.0f, smoothedDrive);
+    const auto drive = juce::jlimit (0.0f, 1.0f, smoothedDrive) * smoothedEngagement;
 
     if (drive < 0.02f)
         return;
@@ -326,7 +333,7 @@ void XYPad::paintTexture (juce::Graphics& g, juce::Rectangle<float> area)
 void XYPad::paintPuck (juce::Graphics& g, juce::Rectangle<float> area)
 {
     const auto centre = positionToPoint (valueX, valueY);
-    const auto level = xyb::meterDisplay (smoothedOutput, -42.0f);
+    const auto level = xyb::meterDisplay (smoothedOutput, -42.0f) * smoothedEngagement;
     const auto radius = 13.0f;
 
     {

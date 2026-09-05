@@ -29,6 +29,7 @@ struct EngineMeters
     std::atomic<float> harmonicGeneration { 0.0f };
     std::atomic<float> drive { 0.0f };
     std::atomic<float> outputLevel { 0.0f };
+    std::atomic<float> ceiling { 0.0f };
     std::atomic<float> harmonicTwo { 0.0f };
     std::atomic<float> harmonicThree { 0.0f };
     std::atomic<float> harmonicFour { 0.0f };
@@ -108,6 +109,8 @@ private:
     int oversamplingShift = 0;
 
     float smoothedSubsonic = 16.0f;
+    float ceilingHold = 0.0f;
+    double currentSampleRate = 48000.0;
 };
 
 } // namespace xyb

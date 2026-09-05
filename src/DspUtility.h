@@ -145,19 +145,20 @@ public:
     {
         cutoff = juce::jlimit (5.0f, sampleRate * 0.45f, frequencyHz);
         g = std::tan (juce::MathConstants<float>::pi * cutoff / sampleRate);
+        updateDenominator();
     }
 
     void setQ (float newQ) noexcept
     {
         q = juce::jmax (0.05f, newQ);
         twoR = 1.0f / q;
+        updateDenominator();
     }
 
     void reset() noexcept { s1 = s2 = 0.0f; }
 
     void process (float input, float& lowOut, float& bandOut, float& highOut) noexcept
     {
-        const auto denominator = 1.0f / (1.0f + twoR * g + g * g);
         highOut = denominator * (input - (twoR + g) * s1 - s2);
         bandOut = g * highOut + s1;
         s1 = flushDenormal (g * highOut + bandOut);
@@ -190,11 +191,17 @@ public:
     float getNormalisedBandwidth() const noexcept { return twoR; }
 
 private:
+    void updateDenominator() noexcept
+    {
+        denominator = 1.0f / (1.0f + twoR * g + g * g);
+    }
+
     float sampleRate = 44100.0f;
     float cutoff = 1000.0f;
     float q = 0.7071f;
     float twoR = 1.4142f;
     float g = 0.1f;
+    float denominator = 1.0f;
     float s1 = 0.0f;
     float s2 = 0.0f;
 };

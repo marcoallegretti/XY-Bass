@@ -598,6 +598,31 @@ void testDryPathAlignment()
 
     report ("dry alignment error", worst);
     check (worst < 1.0e-5, "mix at zero returns the input delayed by the reported latency");
+
+    xyb::BassEngine hotEngine;
+    hotEngine.prepare (48000.0, 128, 2);
+    hotEngine.setParameters (parameters);
+
+    auto hot = makeBuffer (2, 48000);
+    fillNoise (hot, 0.985f, 91);
+    Buffer hotReference (hot);
+
+    render (hotEngine, hot, 128);
+
+    double hotWorst = 0.0;
+    double hotPeak = 0.0;
+
+    for (int i = 24000; i < hot.getNumSamples(); ++i)
+    {
+        hotPeak = juce::jmax (hotPeak, (double) std::abs (hotReference.getSample (0, i)));
+        hotWorst = juce::jmax (hotWorst, (double) std::abs (hot.getSample (0, i)
+                                                            - hotReference.getSample (0, i - latency)));
+    }
+
+    report ("hot source peak", hotPeak);
+    report ("dry alignment error on a hot source", hotWorst);
+    check (hotPeak > 0.9, "the hot source actually exceeds the ceiling knee");
+    check (hotWorst < 1.0e-5, "mix at zero stays transparent on material above the ceiling knee");
 }
 
 void testOversizedBlocks()

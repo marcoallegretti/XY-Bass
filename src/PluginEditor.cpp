@@ -47,7 +47,7 @@ XYBassEditor::XYBassEditor (XYBassProcessor& owner)
     const auto& stored = state.state;
     setSize ((int) stored.getProperty ("editorWidth", 600), (int) stored.getProperty ("editorHeight", 640));
 
-    startTimerHz (12);
+    startTimerHz (24);
 }
 
 XYBassEditor::~XYBassEditor()
@@ -111,6 +111,9 @@ void XYBassEditor::renderChassis()
     if (! readoutBounds.isEmpty())
         xyui::surface::drawRecess (g, readoutBounds, theme, 4.0f, theme.screen);
 
+    if (! meterBounds.isEmpty())
+        xyui::surface::drawRecess (g, meterBounds.withTrimmedRight (13.0f), theme, 3.0f, theme.screen);
+
     const auto screwRadius = 4.0f;
     const auto inset = 11.0f;
     const std::array<juce::Point<float>, 4> screws {
@@ -135,6 +138,23 @@ void XYBassEditor::paint (juce::Graphics& g)
         renderChassis();
 
     g.drawImageTransformed (chassis, juce::AffineTransform::scale (1.0f / chassisScale));
+
+    if (! meterBounds.isEmpty())
+    {
+        const auto track = meterBounds.withTrimmedRight (13.0f).reduced (2.0f);
+
+        if (meterLevel > 0.001f)
+        {
+            const auto filled = track.withWidth (track.getWidth() * meterLevel);
+            g.setGradientFill ({ theme.accent.withAlpha (0.55f), track.getX(), track.getCentreY(),
+                                 theme.accentGlow, track.getRight(), track.getCentreY(), false });
+            g.fillRoundedRectangle (filled, 1.5f);
+        }
+
+        const auto lamp = juce::Rectangle<float> (7.0f, 7.0f)
+                              .withCentre ({ meterBounds.getRight() - 3.5f, meterBounds.getCentreY() });
+        xyui::surface::drawIndicatorLamp (g, lamp, theme, clipLevel);
+    }
 
     if (readoutBounds.isEmpty())
         return;
@@ -162,7 +182,10 @@ void XYBassEditor::resized()
     auto bounds = getLocalBounds();
     const auto header = bounds.removeFromTop (46);
 
-    readoutBounds = header.toFloat().reduced (18.0f, 13.0f).removeFromRight (104.0f);
+    auto headerRight = header.toFloat().reduced (18.0f, 13.0f);
+    readoutBounds = headerRight.removeFromRight (104.0f);
+    headerRight.removeFromRight (10.0f);
+    meterBounds = headerRight.removeFromRight (92.0f).withSizeKeepingCentre (92.0f, 9.0f);
 
     auto footer = bounds.removeFromBottom (108);
     pad.setBounds (bounds.reduced (16, 2));
@@ -210,6 +233,21 @@ void XYBassEditor::timerCallback()
         readout = next;
         repaint (readoutBounds.toNearestInt().expanded (2));
     }
+
+    const auto engaged = (bypassButton.getToggleState() ? 0.0f : 1.0f)
+                         * (float) (mixSlider.getValue() * 0.01);
+    const auto level = xyb::meterDisplay (meters.outputLevel.load (std::memory_order_relaxed), -42.0f)
+                       * engaged;
+    const auto clip = meters.ceiling.load (std::memory_order_relaxed) * engaged;
+
+    if (std::abs (level - meterLevel) > 0.004f || std::abs (clip - clipLevel) > 0.004f)
+    {
+        meterLevel = level;
+        clipLevel = clip;
+        repaint (meterBounds.toNearestInt().expanded (3));
+    }
+
+    pad.setEngagement (engaged);
 }
 
 void XYBassEditor::showContextMenu()

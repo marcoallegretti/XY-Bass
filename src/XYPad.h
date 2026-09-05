@@ -28,6 +28,8 @@ public:
     void focusGained (FocusChangeType) override;
     void focusLost (FocusChangeType) override;
 
+    void setEngagement (float amount) noexcept;
+
     std::function<void()> onContextMenu;
 
 private:
@@ -63,6 +65,8 @@ private:
     float smoothedOutput = 0.0f;
     std::array<float, 4> smoothedWeights { { 0.0f, 0.0f, 0.0f, 0.0f } };
 
+    float engagement = 1.0f;
+    float smoothedEngagement = 1.0f;
     bool focused = false;
     bool dragging = false;
 

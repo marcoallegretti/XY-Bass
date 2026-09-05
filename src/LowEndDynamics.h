@@ -45,29 +45,35 @@ public:
         reference.setTarget (level);
         const auto average = reference.next();
 
-        const auto ratio = 1.0f + amount * 2.6f;
-        const auto thresholdDb = juce::Decibels::gainToDecibels (juce::jmax (average, 2.0e-4f)) + 3.5f;
-        const auto levelDb = juce::Decibels::gainToDecibels (juce::jmax (level, 1.0e-6f));
-        const auto over = levelDb - thresholdDb;
-
         constexpr float knee = 9.0f;
-        const auto slope = 1.0f - 1.0f / ratio;
-
+        const auto reference = juce::jmax (average, 2.0e-4f);
         float targetReduction = 0.0f;
 
-        if (over >= knee * 0.5f)
-            targetReduction = over * slope;
-        else if (over > -knee * 0.5f)
+        if (level > reference * kneeEntry)
         {
-            const auto kneeOffset = over + knee * 0.5f;
-            targetReduction = slope * kneeOffset * kneeOffset / (2.0f * knee);
-        }
+            const auto ratio = 1.0f + amount * 2.6f;
+            const auto thresholdDb = juce::Decibels::gainToDecibels (reference) + 3.5f;
+            const auto levelDb = juce::Decibels::gainToDecibels (level);
+            const auto over = levelDb - thresholdDb;
+            const auto slope = 1.0f - 1.0f / ratio;
 
-        targetReduction = juce::jlimit (0.0f, 9.0f, targetReduction);
+            if (over >= knee * 0.5f)
+                targetReduction = over * slope;
+            else if (over > -knee * 0.5f)
+            {
+                const auto kneeOffset = over + knee * 0.5f;
+                targetReduction = slope * kneeOffset * kneeOffset / (2.0f * knee);
+            }
+
+            targetReduction = juce::jlimit (0.0f, 9.0f, targetReduction);
+        }
 
         const auto release = juce::jmap (percussiveBlend, releaseCoeff, fastReleaseCoeff);
         const auto coefficient = targetReduction > reductionDb ? attackCoeff : release;
         reductionDb = flushDenormal (targetReduction + coefficient * (reductionDb - targetReduction));
+
+        if (reductionDb < 1.0e-4f)
+            return 1.0f;
 
         return juce::Decibels::decibelsToGain (-reductionDb);
     }
@@ -83,6 +89,8 @@ private:
     float fastReleaseCoeff = 0.0f;
     float reductionDb = 0.0f;
     float percussiveBlend = 0.0f;
+
+    static constexpr float kneeEntry = 0.8913f;
 };
 
 } // namespace xyb
