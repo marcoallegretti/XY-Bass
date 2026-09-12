@@ -103,7 +103,7 @@ void XYBassEditor::renderChassis()
     if (bounds.isEmpty())
         return;
 
-    chassisScale = juce::jlimit (1.0f, 2.0f, juce::Component::getApproximateScaleFactorForComponent (this));
+    chassisScale = xyui::surface::displayScale (*this);
 
     chassis = juce::Image (juce::Image::ARGB,
                            juce::roundToInt ((float) bounds.getWidth() * chassisScale),
@@ -160,8 +160,11 @@ void XYBassEditor::renderChassis()
 
 void XYBassEditor::paint (juce::Graphics& g)
 {
-    if (chassis.isNull())
+    if (chassis.isNull() || std::abs (xyui::surface::displayScale (*this) - chassisScale) > 0.01f)
         renderChassis();
+
+    if (chassis.isNull())
+        return;
 
     g.drawImageTransformed (chassis, juce::AffineTransform::scale (1.0f / chassisScale));
 
@@ -245,7 +248,7 @@ void XYBassEditor::resized()
     deltaButton.setBounds (buttons.removeFromTop (buttonHeight).reduced (0, 2));
     bypassButton.setBounds (buttons.reduced (0, 2));
 
-    renderChassis();
+    chassis = {};
 }
 
 void XYBassEditor::timerCallback()

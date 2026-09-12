@@ -5,6 +5,13 @@
 namespace xyui::surface
 {
 
+inline float displayScale (juce::Component& component) noexcept
+{
+    return juce::jlimit (1.0f, 2.0f,
+                         juce::Component::getApproximateScaleFactorForComponent (&component));
+}
+
+
 void drawInnerShadow (juce::Graphics&, juce::Rectangle<float> bounds, float corner,
                       juce::Colour colour, float radius, juce::Point<int> offset);
 

@@ -73,7 +73,7 @@ void XYPad::resized()
                              4.0f + random.nextFloat() * 13.0f,
                              (random.nextFloat() - 0.5f) * 1.5f });
 
-    renderChrome();
+    chrome = {};
 }
 
 void XYPad::renderChrome()
@@ -83,7 +83,7 @@ void XYPad::renderChrome()
     if (bounds.isEmpty())
         return;
 
-    chromeScale = juce::jlimit (1.0f, 2.0f, juce::Component::getApproximateScaleFactorForComponent (this));
+    chromeScale = xyui::surface::displayScale (*this);
 
     chrome = juce::Image (juce::Image::ARGB,
                           juce::roundToInt ((float) bounds.getWidth() * chromeScale),
@@ -186,8 +186,11 @@ void XYPad::timerCallback()
 
 void XYPad::paint (juce::Graphics& g)
 {
-    if (chrome.isNull())
+    if (chrome.isNull() || std::abs (xyui::surface::displayScale (*this) - chromeScale) > 0.01f)
         renderChrome();
+
+    if (chrome.isNull())
+        return;
 
     g.drawImageTransformed (chrome, juce::AffineTransform::scale (1.0f / chromeScale));
 
