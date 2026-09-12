@@ -64,6 +64,7 @@ void PitchTracker::reset()
     frequency = 0.0f;
     confidence = 0.0f;
     stability = 0.0f;
+    tracking = 0.0f;
     smoothedFrequency = 0.0f;
     deviation = 0.0f;
     pendingFrequency = 0.0f;
@@ -266,7 +267,11 @@ void PitchTracker::finishFrame() noexcept
 
     const auto relativeDeviation = std::abs (frequency - smoothedFrequency) / juce::jmax (smoothedFrequency, 1.0f);
     deviation += (relativeDeviation - deviation) * 0.25f;
-    stability = juce::jlimit (0.0f, 1.0f, 1.0f - deviation * 14.0f);
+
+    const auto follow = accepted ? 0.25f : 0.10f;
+    tracking += ((accepted ? 1.0f : 0.0f) - tracking) * follow;
+
+    stability = juce::jlimit (0.0f, 1.0f, (1.0f - deviation * 14.0f) * tracking);
 }
 
 } // namespace xyb

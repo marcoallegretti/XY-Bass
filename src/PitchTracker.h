@@ -53,6 +53,7 @@ private:
     float frequency = 0.0f;
     float confidence = 0.0f;
     float stability = 0.0f;
+    float tracking = 0.0f;
     float smoothedFrequency = 0.0f;
     float deviation = 0.0f;
     float pendingFrequency = 0.0f;

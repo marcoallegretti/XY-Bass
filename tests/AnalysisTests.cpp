@@ -370,6 +370,41 @@ void testSubharmonicGating()
 
 } // namespace
 
+void testStabilityReportsTracking()
+{
+    section ("stability reflects tracking, not stillness");
+
+    const auto sampleRate = 48000.0;
+    constexpr int blockSize = 256;
+
+    xyb::PitchTracker tracker;
+    tracker.prepare (sampleRate);
+
+    auto tone = makeBuffer (1, (int) (sampleRate * 1.5));
+    fillSine (tone, 82.4, sampleRate, 0.5f);
+
+    for (int start = 0; start + blockSize <= tone.getNumSamples(); start += blockSize)
+        tracker.process (tone.getReadPointer (0) + start, blockSize);
+
+    const auto lockedStability = tracker.getStability();
+    const auto lockedFrequency = tracker.getFrequency();
+
+    auto noise = makeBuffer (1, (int) (sampleRate * 1.5));
+    fillNoise (noise, 0.5f, 9182);
+
+    for (int start = 0; start + blockSize <= noise.getNumSamples(); start += blockSize)
+        tracker.process (noise.getReadPointer (0) + start, blockSize);
+
+    const auto stuckStability = tracker.getStability();
+
+    report ("stability while locked to a tone", lockedStability);
+    report ("frequency while locked", lockedFrequency);
+    report ("stability once the tone is replaced by noise", stuckStability);
+
+    check (lockedStability > 0.75, "a tracked tone reports high stability");
+    check (stuckStability < 0.5, "a tracker that has stopped following the source reports low stability");
+}
+
 int main()
 {
     testPitchAccuracy();
@@ -380,6 +415,7 @@ int main()
     testAdaptiveRestraint();
     testReconstructionEngagement();
     testSubharmonicGating();
+    testStabilityReportsTracking();
 
     std::cout << std::endl
               << (failures == 0 ? "PASSED " : "FAILED ")
