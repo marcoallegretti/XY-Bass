@@ -7,8 +7,11 @@ static constexpr float kCharacterCrossover = 500.0f;
 static constexpr float kNormalisationReference = 0.2f;
 static constexpr float kNormalisationExponent = 0.7f;
 
-void BassEngine::prepare (double sampleRate, int maximumBlockSize, int numChannels)
+void BassEngine::prepare (double newSampleRate, int maximumBlockSize, int numChannels)
 {
+    const auto sampleRate = juce::jlimit (8000.0, 768000.0,
+                                          newSampleRate > 0.0 ? newSampleRate : 44100.0);
+
     currentSampleRate = sampleRate;
     preparedChannels = juce::jlimit (1, 2, numChannels);
     preparedBlockSize = juce::jmax (16, maximumBlockSize);
@@ -216,6 +219,9 @@ void BassEngine::process (juce::AudioBuffer<float>& buffer)
 {
     const auto numChannels = buffer.getNumChannels();
     const auto numSamples = buffer.getNumSamples();
+
+    if (oversampler == nullptr || preparedBlockSize <= 0)
+        return;
 
     if (numSamples <= preparedBlockSize)
     {

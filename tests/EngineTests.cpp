@@ -570,6 +570,50 @@ void testBandReconstruction()
     check (worst < 0.05, "the band split recombines to a flat magnitude response");
 }
 
+void testDegenerateSetup()
+{
+    section ("degenerate preparation");
+
+    {
+        xyb::BassEngine engine;
+        auto buffer = makeBuffer (2, 256);
+        fillKick (buffer, 48000.0, 0.5f);
+        engine.process (buffer);
+
+        check (isFinite (buffer), "an unprepared engine leaves the buffer finite");
+    }
+
+    for (auto rate : { 0.0, -48000.0, 1.0 })
+    {
+        xyb::BassEngine engine;
+        engine.prepare (rate, 256, 2);
+        engine.setParameters (position (0.5f, 0.5f));
+
+        auto buffer = makeBuffer (2, 4096);
+        fillKick (buffer, 48000.0, 0.5f);
+        render (engine, buffer, 256);
+
+        check (isFinite (buffer), "preparing at rate " + juce::String (rate) + " stays finite");
+        check (peak (buffer) < 1.05, "preparing at rate " + juce::String (rate) + " stays bounded");
+    }
+
+    for (auto rate : { 88200.0, 176400.0 })
+    {
+        xyb::BassEngine engine;
+        engine.prepare (rate, 256, 2);
+        engine.setParameters (position (0.5f, 0.9f));
+
+        auto buffer = makeBuffer (2, (int) (rate * 0.5));
+        fillKick (buffer, rate, 0.7f);
+        render (engine, buffer, 256);
+
+        check (isFinite (buffer), "finite output at " + juce::String (rate) + " Hz");
+        check (peak (buffer) > 0.02, "the engine produces output at " + juce::String (rate) + " Hz");
+        check (pinnedFraction (buffer, 0.95f) < 0.01,
+               "the output ceiling stays out of the way at " + juce::String (rate) + " Hz");
+    }
+}
+
 void testStability()
 {
     section ("stability across the pad");
@@ -1365,6 +1409,7 @@ int main()
     testShaperCharacter();
     testBandReconstruction();
     testStability();
+    testDegenerateSetup();
     testSilenceAndDenormals();
     testDcRejection();
     testDryPathAlignment();

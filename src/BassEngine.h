@@ -50,7 +50,7 @@ public:
         bool delta = false;
     };
 
-    void prepare (double sampleRate, int maximumBlockSize, int numChannels);
+    void prepare (double newSampleRate, int maximumBlockSize, int numChannels);
     void reset();
 
     void setParameters (const Parameters& newParameters) noexcept { parameters = newParameters; }
