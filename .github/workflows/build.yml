@@ -92,9 +92,9 @@ jobs:
         run: |
           set -euo pipefail
           case "$RUNNER_OS" in
-            Windows) PATTERN='*windows.zip';         BIN=./clap-validator.exe ;;
-            macOS)   PATTERN='*macos-universal.zip'; BIN=./clap-validator ;;
-            Linux)   PATTERN='*ubuntu-22.04.zip';    BIN=./clap-validator ;;
+            Windows) PATTERN='*windows.zip' ;;
+            macOS)   PATTERN='*macos-universal.zip' ;;
+            Linux)   PATTERN='*ubuntu-22.04.zip' ;;
           esac
           # The asset names carry a build hash, so match by pattern rather than pin a filename.
           gh release download 0.4.1 --repo free-audio/clap-validator --pattern "$PATTERN" --clobber -O cv.zip
@@ -103,6 +103,9 @@ jobs:
           if [ "$RUNNER_OS" != "Windows" ]; then
             tar xzf clap-validator-*.tar.gz
           fi
+          # Each platform's archive nests the binary differently, so locate it.
+          BIN="$(find . -type f \( -name clap-validator -o -name clap-validator.exe \) | head -1)"
+          [ -n "$BIN" ] || { echo "::error::clap-validator binary not found"; exit 1; }
           chmod +x "$BIN"
 
           PLUGIN="build/XYBass_artefacts/Release/CLAP/XY Bass.clap"
