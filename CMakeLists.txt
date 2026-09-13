@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(XYBass VERSION 0.1.0 LANGUAGES CXX)
+set(XYBASS_VERSION "0.1.0" CACHE STRING "Plugin version, normally taken from the release tag")
+
+project(XYBass VERSION ${XYBASS_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -45,6 +47,7 @@ juce_add_plugin(XYBass
     PLUGIN_CODE XyBs
     FORMATS ${XYBASS_FORMATS}
     PRODUCT_NAME "XY Bass"
+    VERSION "${XYBASS_VERSION}"
     VST3_CATEGORIES Fx Dynamics Distortion
 )
 
@@ -225,6 +228,7 @@ if(MSVC)
 endif()
 
 add_test(NAME xy-bass-performance COMMAND XYBassPerformanceTests)
+set_tests_properties(xy-bass-performance PROPERTIES LABELS performance)
 
 
 juce_add_console_app(XYBassPluginTests
