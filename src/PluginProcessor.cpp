@@ -19,6 +19,11 @@ juce::String formatPosition (float value, int)
 {
     return juce::String (juce::roundToInt (value * 100.0f));
 }
+
+float parsePosition (const juce::String& text)
+{
+    return juce::jlimit (0.0f, 1.0f, text.getFloatValue() * 0.01f);
+}
 } // namespace
 
 juce::AudioProcessorValueTreeState::ParameterLayout XYBassProcessor::createLayout()
@@ -29,11 +34,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout XYBassProcessor::createLayou
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { ids::positionX, 1 }, "Sub / Translate", Range { 0.0f, 1.0f, 0.0001f }, 0.5f,
-        juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatPosition)));
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatPosition)
+                                             .withValueFromStringFunction (parsePosition)));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { ids::positionY, 1 }, "Clean / Dirty", Range { 0.0f, 1.0f, 0.0001f }, 0.5f,
-        juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatPosition)));
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatPosition)
+                                             .withValueFromStringFunction (parsePosition)));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { ids::input, 1 }, "Input", Range { -18.0f, 18.0f, 0.1f }, 0.0f,
@@ -257,6 +264,8 @@ void XYBassProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     currentProgram = juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("program", 0));
     parameters.replaceState (state);
+
+    updateHostDisplay (juce::AudioProcessorListener::ChangeDetails{}.withProgramChanged (true));
 }
 
 juce::AudioProcessorEditor* XYBassProcessor::createEditor()

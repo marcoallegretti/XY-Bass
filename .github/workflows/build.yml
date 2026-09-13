@@ -31,7 +31,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libasound2-dev libjack-jackd2-dev \
+          sudo apt-get install -y ninja-build xvfb libasound2-dev libjack-jackd2-dev \
             libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev \
             libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
             libglu1-mesa-dev mesa-common-dev
@@ -61,8 +61,53 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure --timeout 900 -LE performance
 
+      - name: Validate the VST3
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/Tracktion/pluginval/releases/download/v1.0.3
+          case "$RUNNER_OS" in
+            Windows) curl -sSL -o pluginval.zip "$BASE/pluginval_Windows.zip"; BIN=./pluginval.exe ;;
+            macOS)   curl -sSL -o pluginval.zip "$BASE/pluginval_macOS.zip";   BIN=./pluginval.app/Contents/MacOS/pluginval ;;
+            Linux)   curl -sSL -o pluginval.zip "$BASE/pluginval_Linux.zip";   BIN=./pluginval ;;
+          esac
+          # unzip is not on the Windows runner; 7z is on all three.
+          7z x -y -bso0 pluginval.zip
+          chmod +x "$BIN"
+
+          PLUGIN="build/XYBass_artefacts/Release/VST3/XY Bass.vst3"
+          # The runner has no display, and pluginval opens the editor.
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            xvfb-run -a "$BIN" --strictness-level 10 --timeout-ms 600000 --validate "$PLUGIN"
+          else
+            "$BIN" --strictness-level 10 --timeout-ms 600000 --validate "$PLUGIN"
+          fi
+
       # A shared runner cannot hold a stable clock, so the timing suite reports
       # rather than gates. Its absolute deadlines are only meaningful on real hardware.
+      - name: Validate the CLAP
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Windows) PATTERN='*windows.zip';         BIN=./clap-validator.exe ;;
+            macOS)   PATTERN='*macos-universal.zip'; BIN=./clap-validator ;;
+            Linux)   PATTERN='*ubuntu-22.04.zip';    BIN=./clap-validator ;;
+          esac
+          # The asset names carry a build hash, so match by pattern rather than pin a filename.
+          gh release download 0.4.1 --repo free-audio/clap-validator --pattern "$PATTERN" --clobber -O cv.zip
+          7z x -y -bso0 cv.zip
+          chmod +x "$BIN"
+
+          PLUGIN="build/XYBass_artefacts/Release/CLAP/XY Bass.clap"
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            xvfb-run -a "$BIN" validate "$PLUGIN"
+          else
+            "$BIN" validate "$PLUGIN"
+          fi
+
       - name: Timing report
         continue-on-error: true
         run: ctest --test-dir build --output-on-failure --timeout 900 -L performance
