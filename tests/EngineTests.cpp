@@ -16,6 +16,12 @@ namespace
 std::atomic<int> allocationCount { 0 };
 std::atomic<bool> allocationTracking { false };
 
+void escape (const void* pointer) noexcept
+{
+    static std::atomic<const void*> sink { nullptr };
+    sink.store (pointer, std::memory_order_relaxed);
+}
+
 void countAllocation() noexcept
 {
     if (allocationTracking.load (std::memory_order_relaxed))
@@ -83,6 +89,12 @@ void installAllocationHooks()
 
 void installAllocationHooks() {}
 
+#endif
+
+#if JUCE_WINDOWS
+constexpr bool kCountsSystemAllocator = true;
+#else
+constexpr bool kCountsSystemAllocator = false;
 #endif
 
 int failures = 0;
@@ -1371,16 +1383,36 @@ void testRealtimeSafety()
     report ("allocations during processing", allocationCount.load());
     check (allocationCount.load() == 0, "the audio path performs no allocation");
 
-    allocationCount.store (0);
-    allocationTracking.store (true);
+    auto measure = [] (auto&& action)
+    {
+        allocationCount.store (0);
+        allocationTracking.store (true);
+        action();
+        allocationTracking.store (false);
+        return allocationCount.load();
+    };
+
+    const auto viaOperatorNew = measure ([]
+    {
+        std::vector<float> probe (256, 1.0f);
+        escape (probe.data());
+    });
+
+    const auto viaSystemAllocator = measure ([]
     {
         juce::AudioBuffer<float> probe (2, 256);
         probe.clear();
-    }
-    allocationTracking.store (false);
+        escape (probe.getWritePointer (0));
+    });
 
-    report ("allocations seen for a probe buffer", allocationCount.load());
-    check (allocationCount.load() > 0, "the allocation counter sees an audio buffer being sized");
+    report ("allocations seen for a vector", viaOperatorNew);
+    report ("allocations seen for an audio buffer", viaSystemAllocator);
+
+    check (viaOperatorNew > 0, "the allocation counter sees a standard allocation");
+
+    // juce::HeapBlock reaches std::malloc, which only the Windows hook intercepts.
+    if (kCountsSystemAllocator)
+        check (viaSystemAllocator > 0, "the allocation counter sees an audio buffer being sized");
 }
 
 } // namespace
