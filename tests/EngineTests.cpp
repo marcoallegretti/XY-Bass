@@ -91,7 +91,7 @@ void installAllocationHooks() {}
 
 #endif
 
-#if JUCE_WINDOWS
+#if JUCE_WINDOWS || defined (__linux__)
 constexpr bool kCountsSystemAllocator = true;
 #else
 constexpr bool kCountsSystemAllocator = false;
@@ -1428,6 +1428,32 @@ void* operator new[] (size_t size)
     countAllocation();
     return std::malloc (size == 0 ? 1 : size);
 }
+
+#if defined (__linux__)
+
+extern "C" void* __real_malloc (size_t);
+extern "C" void* __real_calloc (size_t, size_t);
+extern "C" void* __real_realloc (void*, size_t);
+
+extern "C" void* __wrap_malloc (size_t size)
+{
+    countAllocation();
+    return __real_malloc (size);
+}
+
+extern "C" void* __wrap_calloc (size_t count, size_t size)
+{
+    countAllocation();
+    return __real_calloc (count, size);
+}
+
+extern "C" void* __wrap_realloc (void* pointer, size_t size)
+{
+    countAllocation();
+    return __real_realloc (pointer, size);
+}
+
+#endif
 
 void operator delete (void* pointer) noexcept { std::free (pointer); }
 void operator delete[] (void* pointer) noexcept { std::free (pointer); }

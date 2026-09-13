@@ -133,6 +133,11 @@ if(MSVC)
     target_compile_options(XYBassTests PRIVATE /utf-8 /arch:AVX)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(XYBassTests PRIVATE
+        -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc)
+endif()
+
 add_test(NAME xy-bass-engine COMMAND XYBassTests)
 
 juce_add_console_app(XYBassAnalysisTests
