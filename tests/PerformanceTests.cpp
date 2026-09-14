@@ -89,7 +89,8 @@ double measureReferenceCost (double sampleRate, int blockSize, int seconds)
     auto buffer = makeBuffer (2, totalSamples);
     fillFullMix (buffer, sampleRate, 0.35f);
 
-    std::array<std::array<xyb::Biquad, 8>, 2> filters;
+    // JUCE's own filter, so that optimising the engine's primitives cannot move the yardstick.
+    std::array<std::array<juce::dsp::IIR::Filter<float>, 8>, 2> filters;
 
     for (auto& channelFilters : filters)
     {
@@ -97,8 +98,9 @@ double measureReferenceCost (double sampleRate, int blockSize, int seconds)
 
         for (auto& filter : channelFilters)
         {
-            filter.prepare (sampleRate);
-            filter.setPeaking (80.0f * (float) (index + 1), 1.0f, 3.0f);
+            filter.coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (
+                sampleRate, 80.0f * (float) (index + 1), 1.0f, juce::Decibels::decibelsToGain (3.0f));
+            filter.reset();
             ++index;
         }
     }
@@ -116,7 +118,7 @@ double measureReferenceCost (double sampleRate, int blockSize, int seconds)
 
                 for (auto& filter : filters[(size_t) channel])
                     for (int i = 0; i < blockSize; ++i)
-                        data[i] = filter.process (data[i]);
+                        data[i] = filter.processSample (data[i]);
             }
 
         best = juce::jmin (best, std::chrono::duration<double> (std::chrono::steady_clock::now() - start).count());
