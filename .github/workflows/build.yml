@@ -137,6 +137,8 @@ jobs:
         shell: pwsh
         run: ctest --test-dir build -C Release --output-on-failure --label-exclude performance
 
+      # pluginval.exe is a GUI-subsystem binary: called outside a pipeline, PowerShell returns
+      # at once and never sees its exit code, so a failing validation would pass the step.
       - name: Validate VST3
         shell: pwsh
         env:
@@ -146,7 +148,7 @@ jobs:
           Expand-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'pluginval_Windows.zip') -DestinationPath (Join-Path $env:RUNNER_TEMP 'pluginval') -Force
           $validator = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'pluginval') -Recurse -File -Filter pluginval.exe | Select-Object -First 1
           if ($null -eq $validator) { throw 'pluginval executable was not found' }
-          & $validator.FullName --strictness-level 10 --timeout-ms 120000 --validate "build/XYBass_artefacts/Release/VST3/XY Bass.vst3"
+          & $validator.FullName --strictness-level 10 --timeout-ms 120000 --validate "build/XYBass_artefacts/Release/VST3/XY Bass.vst3" | Out-Host
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Stage the bundle by name: MSVC drops an import library and an export file
