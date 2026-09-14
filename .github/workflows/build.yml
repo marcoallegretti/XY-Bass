@@ -117,4 +117,4 @@ jobs:
 
       - name: Timing report
         continue-on-error: true
-        run: ctest --test-dir build --output-on-failure --timeout 900 -L performance
+        run: ctest --test-dir build -V --timeout 900 -L performance
