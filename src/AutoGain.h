@@ -30,6 +30,7 @@ public:
         drySquared.prepare (sampleRate, 320.0f);
         wetSquared.prepare (sampleRate, 320.0f);
         output.prepare (sampleRate, 240.0f);
+        settleSamples = juce::roundToInt (0.4 * sampleRate);
 
         reset();
     }
@@ -49,6 +50,7 @@ public:
 
         dryAccumulator = wetAccumulator = fullAccumulator = 0.0;
         accumulatedSamples = 0;
+        measuredSamples = 0;
         currentGain = 1.0f;
     }
 
@@ -100,9 +102,14 @@ public:
         const auto dryPower = drySquared.advance (numSamples);
         const auto wetPower = wetSquared.advance (numSamples);
 
+        // The averages start from zero, so the first measurable window would set the ratio
+        // alone; a lone note onset could then latch the gain at its limit.
+        if (measurable)
+            measuredSamples = juce::jmin (settleSamples, measuredSamples + numSamples);
+
         if (! enabled)
             output.setTarget (1.0f);
-        else if (measurable && dryPower > 1.0e-10f && wetPower > 1.0e-10f)
+        else if (measurable && measuredSamples >= settleSamples && dryPower > 1.0e-10f && wetPower > 1.0e-10f)
             output.setTarget (juce::jlimit (0.5f, 2.0f, std::sqrt (dryPower / wetPower)));
 
         currentGain = output.advance (numSamples);
@@ -119,6 +126,8 @@ private:
     double wetAccumulator = 0.0;
     double fullAccumulator = 0.0;
     int accumulatedSamples = 0;
+    int measuredSamples = 0;
+    int settleSamples = 1;
 
     float currentGain = 1.0f;
     bool enabled = true;

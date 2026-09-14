@@ -71,22 +71,20 @@ void PitchTracker::prepare (double sampleRate)
     decimationFactor = juce::jmax (1, (int) std::round (sampleRate / 4000.0));
     workingRate = sampleRate / decimationFactor;
 
-    const auto antiAlias = juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate,
-                                                                            juce::jmin (1500.0, workingRate * 0.4),
-                                                                            0.54);
-    const auto antiAliasSecond = juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate,
-                                                                                  juce::jmin (1500.0, workingRate * 0.4),
-                                                                                  1.31);
+    const auto antiAliasCutoff = (float) juce::jmin (1500.0, workingRate * 0.4);
+    const auto antiAlias = juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate, antiAliasCutoff, 0.54f);
+    const auto antiAliasSecond = juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate, antiAliasCutoff, 1.31f);
 
     decimationFilter[0].setCoefficients (*antiAlias);
     decimationFilter[1].setCoefficients (*antiAliasSecond);
-    highPass.setCoefficients (*juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, 20.0, 0.7071));
+    highPass.setCoefficients (*juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, 20.0f, 0.7071f));
 
     minimumLag = juce::jmax (2, (int) std::floor (workingRate / maximumFrequency));
     maximumLag = (int) std::ceil (workingRate / minimumFrequency);
 
     windowLength = juce::jmax (256, (int) std::round (workingRate * 0.128));
     hopLength = juce::jmax (24, windowLength / 8);
+    lagsPerStep = juce::jmax (1, (int) std::ceil ((float) (maximumLag - minimumLag + 1) * 2.5f / (float) hopLength));
 
     historySize = juce::nextPowerOfTwo (windowLength + maximumLag + hopLength + 4);
 
@@ -130,8 +128,6 @@ void PitchTracker::reset()
 
 void PitchTracker::process (const float* mono, int numSamples) noexcept
 {
-    int decimatedCount = 0;
-
     for (int i = 0; i < numSamples; ++i)
     {
         auto sample = highPass.process (mono[i]);
@@ -143,22 +139,18 @@ void PitchTracker::process (const float* mono, int numSamples) noexcept
             decimationCounter = 0;
             history[(size_t) writeIndex] = sample;
             writeIndex = (writeIndex + 1) & (historySize - 1);
-            ++decimatedCount;
 
             if (++hopCounter >= hopLength)
             {
                 hopCounter = 0;
                 startFrame();
             }
-        }
-    }
 
-    if (searching)
-    {
-        const auto span = juce::jmax (1, maximumLag - minimumLag + 1);
-        const auto budget = juce::jmax (4, (int) std::ceil ((float) span * 2.5f * (float) juce::jmax (1, decimatedCount)
-                                                            / (float) hopLength));
-        advanceSearch (budget);
+            // A fixed number of lags per decimated sample keeps frame timing independent
+            // of how the input is split into blocks.
+            if (searching)
+                advanceSearch (lagsPerStep);
+        }
     }
 }
 

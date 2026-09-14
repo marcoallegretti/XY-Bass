@@ -15,8 +15,9 @@ void BassEngine::prepare (double newSampleRate, int maximumBlockSize, int numCha
     currentSampleRate = sampleRate;
     preparedChannels = juce::jlimit (1, 2, numChannels);
     preparedBlockSize = juce::jmax (16, maximumBlockSize);
+    controlPeriod = juce::jlimit (16, 1024, juce::nextPowerOfTwo (juce::roundToInt (sampleRate / 187.5)));
 
-    const juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) preparedBlockSize, (juce::uint32) preparedChannels };
+    const juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) controlPeriod, (juce::uint32) preparedChannels };
 
     splitter.prepare (spec);
     pitchTracker.prepare (sampleRate);
@@ -30,14 +31,14 @@ void BassEngine::prepare (double newSampleRate, int maximumBlockSize, int numCha
     const auto stages = sampleRate <= 100000.0 ? 1 : 0;
     oversamplingShift = stages;
 
-    oversampler.prepare (preparedChannels, preparedBlockSize, stages > 0);
+    oversampler.prepare (preparedChannels, controlPeriod, stages > 0);
     latencySamples = oversampler.getLatencyInSamples();
 
-    dryBuffer.setSize (preparedChannels, preparedBlockSize);
-    saturationBuffer.setSize (preparedChannels, preparedBlockSize);
-    parallelBuffer.setSize (preparedChannels, preparedBlockSize);
-    shaperControls.assign ((size_t) preparedBlockSize, ShaperControls {});
-    monoBuffer.setSize (1, preparedBlockSize);
+    dryBuffer.setSize (preparedChannels, controlPeriod);
+    saturationBuffer.setSize (preparedChannels, controlPeriod);
+    parallelBuffer.setSize (preparedChannels, controlPeriod);
+    shaperControls.assign ((size_t) controlPeriod, ShaperControls {});
+    monoBuffer.setSize (1, controlPeriod);
 
     dryDelay.prepare (preparedChannels, latencySamples + 8);
     parallelDelay.prepare (preparedChannels, latencySamples + 8);
@@ -151,6 +152,8 @@ void BassEngine::reset()
 
     smoothedSubsonic = 16.0f;
     ceilingHold = 0.0f;
+    periodCeilingActive = false;
+    periodPosition = 0;
 }
 
 void BassEngine::updateControls (int numSamples)
@@ -214,41 +217,69 @@ void BassEngine::process (juce::AudioBuffer<float>& buffer)
 {
     juce::ScopedNoDenormals noDenormals;
 
-    const auto numChannels = buffer.getNumChannels();
+    if (! oversampler.isPrepared())
+        return;
+
+    const auto numChannels = juce::jmin (buffer.getNumChannels(), 2);
     const auto numSamples = buffer.getNumSamples();
-
-    if (! oversampler.isPrepared() || preparedBlockSize <= 0)
-        return;
-
-    if (numSamples <= preparedBlockSize)
-    {
-        processChunk (buffer);
-        return;
-    }
-
     std::array<float*, 2> pointers { { nullptr, nullptr } };
 
-    for (int start = 0; start < numSamples; start += preparedBlockSize)
+    // Controls advance at fixed sample positions carried across calls, so every host
+    // block schedule renders the same output.
+    for (int start = 0; start < numSamples;)
     {
-        const auto count = juce::jmin (preparedBlockSize, numSamples - start);
+        if (periodPosition == 0)
+            updateControls (controlPeriod);
 
-        for (int channel = 0; channel < juce::jmin (numChannels, 2); ++channel)
+        const auto count = juce::jmin (controlPeriod - periodPosition, numSamples - start);
+
+        for (int channel = 0; channel < numChannels; ++channel)
             pointers[(size_t) channel] = buffer.getWritePointer (channel) + start;
 
-        juce::AudioBuffer<float> view (pointers.data(), juce::jmin (numChannels, 2), count);
-        processChunk (view);
+        juce::AudioBuffer<float> view (pointers.data(), numChannels, count);
+        start += count;
+
+        if (! processChunk (view))
+        {
+            reset();
+            continue;
+        }
+
+        periodPosition += count;
+
+        if (periodPosition == controlPeriod)
+        {
+            finishPeriod();
+            periodPosition = 0;
+        }
     }
+
+    for (int channel = numChannels; channel < buffer.getNumChannels(); ++channel)
+        buffer.clear (channel, 0, numSamples);
 }
 
-void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
+void BassEngine::finishPeriod()
+{
+    analyser.setPitch (pitchTracker.getFrequency(), pitchTracker.getConfidence(), pitchTracker.getStability());
+    analyser.finishBlock (controlPeriod);
+
+    spectralBalance.updateBlock (controlPeriod);
+    autoGain.updateBlock (controlPeriod);
+
+    const auto holdSamples = (float) juce::jmax (1, (int) (0.35 * currentSampleRate));
+    ceilingHold = periodCeilingActive ? 1.0f : juce::jmax (0.0f, ceilingHold - (float) controlPeriod / holdSamples);
+    periodCeilingActive = false;
+
+    publishMeters();
+}
+
+bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
 {
     const auto numChannels = juce::jmin (buffer.getNumChannels(), preparedChannels);
-    const auto numSamples = juce::jmin (buffer.getNumSamples(), preparedBlockSize);
+    const auto numSamples = juce::jmin (buffer.getNumSamples(), controlPeriod);
 
     if (numChannels <= 0 || numSamples <= 0)
-        return;
-
-    updateControls (numSamples);
+        return true;
 
     auto* mono = monoBuffer.getWritePointer (0);
 
@@ -364,8 +395,6 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
     }
 
     pitchTracker.process (mono, numSamples);
-    analyser.setPitch (pitchTracker.getFrequency(), pitchTracker.getConfidence(), pitchTracker.getStability());
-    analyser.finishBlock (numSamples);
 
     {
         juce::dsp::AudioBlock<float> block (saturationBuffer.getArrayOfWritePointers(),
@@ -395,7 +424,6 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
     dryDelay.process (dryBuffer, numSamples);
 
     bool invalid = false;
-    bool ceilingActive = false;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -442,7 +470,7 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
             if (std::abs (result) > 1.0f)
             {
                 result = softClip (result, 0.9f);
-                ceilingActive = true;
+                periodCeilingActive = true;
             }
 
             if (! (std::abs (result) < 1.0e6f))
@@ -457,21 +485,16 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         outputEnvelope.process (wetMono);
     }
 
-    spectralBalance.updateBlock (numSamples);
-    autoGain.updateBlock (numSamples);
-
-    ceilingHold = ceilingActive ? 1.0f : juce::jmax (0.0f, ceilingHold - (float) numSamples / (float) juce::jmax (1, (int) (0.35 * currentSampleRate)));
-
     for (int channel = numChannels; channel < buffer.getNumChannels(); ++channel)
         buffer.clear (channel, 0, buffer.getNumSamples());
 
     if (invalid)
     {
         buffer.clear();
-        reset();
+        return false;
     }
 
-    publishMeters();
+    return true;
 }
 
 void BassEngine::processBypassed (juce::AudioBuffer<float>& buffer, int numSamples)

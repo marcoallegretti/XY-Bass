@@ -43,6 +43,7 @@ private:
     int windowLength = 512;
     int hopLength = 128;
     int hopCounter = 0;
+    int lagsPerStep = 1;
 
     int minimumLag = 13;
     int maximumLag = 167;

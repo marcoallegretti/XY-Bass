@@ -58,7 +58,6 @@ public:
     const Parameters& getParameters() const noexcept { return parameters; }
 
     void process (juce::AudioBuffer<float>& buffer);
-    void processChunk (juce::AudioBuffer<float>& buffer);
     void processBypassed (juce::AudioBuffer<float>& buffer, int numSamples);
 
     int getLatencySamples() const noexcept { return latencySamples; }
@@ -68,7 +67,9 @@ public:
     const EngineTargets& getTargets() const noexcept { return targets; }
 
 private:
+    bool processChunk (juce::AudioBuffer<float>& buffer);
     void updateControls (int numSamples);
+    void finishPeriod();
     void publishMeters();
 
     Parameters parameters;
@@ -106,11 +107,14 @@ private:
 
     int preparedChannels = 2;
     int preparedBlockSize = 512;
+    int controlPeriod = 128;
+    int periodPosition = 0;
     int latencySamples = 0;
     int oversamplingShift = 0;
 
     float smoothedSubsonic = 16.0f;
     float ceilingHold = 0.0f;
+    bool periodCeilingActive = false;
     double currentSampleRate = 48000.0;
 };
 
