@@ -52,9 +52,7 @@ public:
         if (level > baseline * kneeEntry)
         {
             const auto ratio = 1.0f + amount * 2.6f;
-            const auto thresholdDb = juce::Decibels::gainToDecibels (baseline) + 3.5f;
-            const auto levelDb = juce::Decibels::gainToDecibels (level);
-            const auto over = levelDb - thresholdDb;
+            const auto over = 20.0f * std::log10 (level / baseline) - 3.5f;
             const auto slope = 1.0f - 1.0f / ratio;
 
             if (over >= knee * 0.5f)
@@ -75,7 +73,7 @@ public:
         if (reductionDb < 1.0e-4f)
             return 1.0f;
 
-        return juce::Decibels::decibelsToGain (-reductionDb);
+        return std::exp (-reductionDb * decibelsToNepers);
     }
 
     float getReductionDb() const noexcept { return reductionDb; }
@@ -91,6 +89,7 @@ private:
     float percussiveBlend = 0.0f;
 
     static constexpr float kneeEntry = 0.8913f;
+    static constexpr float decibelsToNepers = 0.11512925f;
 };
 
 } // namespace xyb
