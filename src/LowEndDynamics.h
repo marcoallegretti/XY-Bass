@@ -70,7 +70,7 @@ public:
 
         const auto release = juce::jmap (percussiveBlend, releaseCoeff, fastReleaseCoeff);
         const auto coefficient = targetReduction > reductionDb ? attackCoeff : release;
-        reductionDb = flushDenormal (targetReduction + coefficient * (reductionDb - targetReduction));
+        reductionDb = targetReduction + coefficient * (reductionDb - targetReduction);
 
         if (reductionDb < 1.0e-4f)
             return 1.0f;

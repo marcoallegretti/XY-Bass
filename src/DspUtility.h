@@ -5,13 +5,7 @@
 namespace xyb
 {
 
-inline constexpr float kDenormalFloor = 1.0e-20f;
 inline constexpr float kTiny = 1.0e-12f;
-
-inline float flushDenormal (float x) noexcept
-{
-    return std::abs (x) < kDenormalFloor ? 0.0f : x;
-}
 
 inline float timeToCoefficient (float milliseconds, float sampleRate) noexcept
 {
@@ -44,7 +38,7 @@ public:
     {
         const auto rectified = std::abs (input);
         const auto coefficient = rectified > envelope ? attackCoeff : releaseCoeff;
-        envelope = flushDenormal (rectified + coefficient * (envelope - rectified));
+        envelope = rectified + coefficient * (envelope - rectified);
         return envelope;
     }
 
@@ -84,14 +78,14 @@ public:
 
     float next() noexcept
     {
-        current = flushDenormal (target + coefficient * (current - target));
+        current = target + coefficient * (current - target);
         return current;
     }
 
     float advance (int steps) noexcept
     {
         const auto blockCoefficient = std::pow (coefficient, (float) juce::jmax (1, steps));
-        current = flushDenormal (target + blockCoefficient * (current - target));
+        current = target + blockCoefficient * (current - target);
         return current;
     }
 
@@ -134,8 +128,8 @@ public:
         const auto nextImaginary = real * sineStep + imaginary * cosineStep;
         const auto correction = 1.5f - 0.5f * (nextReal * nextReal + nextImaginary * nextImaginary);
 
-        real = flushDenormal (nextReal * correction);
-        imaginary = flushDenormal (nextImaginary * correction);
+        real = nextReal * correction;
+        imaginary = nextImaginary * correction;
     }
 
     void nudge (float radians) noexcept
@@ -172,7 +166,7 @@ public:
     {
         const auto output = input - lastInput + pole * lastOutput;
         lastInput = input;
-        lastOutput = flushDenormal (output);
+        lastOutput = output;
         return lastOutput;
     }
 
@@ -212,9 +206,9 @@ public:
     {
         highOut = denominator * (input - (twoR + g) * s1 - s2);
         bandOut = g * highOut + s1;
-        s1 = flushDenormal (g * highOut + bandOut);
+        s1 = g * highOut + bandOut;
         lowOut = g * bandOut + s2;
-        s2 = flushDenormal (g * bandOut + lowOut);
+        s2 = g * bandOut + lowOut;
     }
 
     float processBandPass (float input) noexcept
@@ -314,8 +308,8 @@ public:
     float process (float input) noexcept
     {
         const auto output = b0 * input + z1;
-        z1 = flushDenormal (b1 * input - a1 * output + z2);
-        z2 = flushDenormal (b2 * input - a2 * output);
+        z1 = b1 * input - a1 * output + z2;
+        z2 = b2 * input - a2 * output;
         return output;
     }
 

@@ -217,6 +217,8 @@ void BassEngine::updateControls (int numSamples)
 
 void BassEngine::process (juce::AudioBuffer<float>& buffer)
 {
+    juce::ScopedNoDenormals noDenormals;
+
     const auto numChannels = buffer.getNumChannels();
     const auto numSamples = buffer.getNumSamples();
 

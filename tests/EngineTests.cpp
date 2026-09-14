@@ -714,6 +714,27 @@ void testSilenceAndDenormals()
     auto pureSilence = makeBuffer (2, 48000);
     render (fresh, pureSilence, 256);
     check (peak (pureSilence) == 0.0, "silence into a reset engine produces exact zero");
+
+    xyb::BassEngine decaying;
+    decaying.prepare (48000.0, 256, 2);
+    decaying.setParameters (position (1.0f, 1.0f));
+
+    auto burst = makeBuffer (2, 48000);
+    fillSine (burst, 55.0, 48000.0, 0.9f);
+    render (decaying, burst, 256);
+
+    auto longTail = makeBuffer (2, 48000 * 12);
+    render (decaying, longTail, 256);
+
+    auto subnormal = 0;
+
+    for (int channel = 0; channel < 2; ++channel)
+        for (int i = 0; i < longTail.getNumSamples(); ++i)
+            if (std::fpclassify (longTail.getSample (channel, i)) == FP_SUBNORMAL)
+                ++subnormal;
+
+    report ("subnormal samples in a long decay", subnormal);
+    check (subnormal == 0, "a long decay never produces subnormal samples");
 }
 
 void testDcRejection()
