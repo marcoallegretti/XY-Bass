@@ -28,23 +28,23 @@ private:
         TptSvf anchor, mud, fizz;
         EnvelopeFollower anchorLevel, mudLevel, fizzLevel;
 
-        void prepare (double sampleRate)
+        void prepare (double rate)
         {
-            anchor.prepare (sampleRate);
+            anchor.prepare (rate);
             anchor.setCutoff (85.0f);
             anchor.setQ (1.0f);
 
-            mud.prepare (sampleRate);
+            mud.prepare (rate);
             mud.setCutoff (190.0f);
             mud.setQ (1.1f);
 
-            fizz.prepare (sampleRate);
+            fizz.prepare (rate);
             fizz.setCutoff (520.0f);
             fizz.setQ (1.0f);
 
             for (auto* envelope : { &anchorLevel, &mudLevel, &fizzLevel })
             {
-                envelope->prepare (sampleRate);
+                envelope->prepare (rate);
                 envelope->setTimes (25.0f, 220.0f);
             }
         }

@@ -1,4 +1,5 @@
 #include "BassEngine.h"
+#include "TestSuites.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -1907,6 +1908,9 @@ void* operator new[] (size_t size)
 extern "C" void* __real_malloc (size_t);
 extern "C" void* __real_calloc (size_t, size_t);
 extern "C" void* __real_realloc (void*, size_t);
+extern "C" void* __wrap_malloc (size_t);
+extern "C" void* __wrap_calloc (size_t, size_t);
+extern "C" void* __wrap_realloc (void*, size_t);
 
 extern "C" void* __wrap_malloc (size_t size)
 {

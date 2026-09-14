@@ -1,10 +1,7 @@
+#include "TestSuites.h"
+
 #include <cstring>
 #include <iostream>
-
-int runEngineTests();
-int runAnalysisTests();
-int runMaterialTests();
-int runPluginTests();
 
 int main (int argc, char* argv[])
 {

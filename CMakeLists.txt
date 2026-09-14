@@ -39,11 +39,17 @@ function(xybass_compile_options target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /utf-8)
     elseif(APPLE)
-        if(CMAKE_OSX_ARCHITECTURES)
-            if("x86_64" IN_LIST CMAKE_OSX_ARCHITECTURES)
-                target_compile_options(${target} PRIVATE "SHELL:-Xarch_x86_64 -mavx")
-            endif()
-        elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+        get_target_property(architectures ${target} OSX_ARCHITECTURES)
+
+        if(NOT architectures)
+            set(architectures ${CMAKE_SYSTEM_PROCESSOR})
+        endif()
+
+        list(LENGTH architectures architectureCount)
+
+        if(architectureCount GREATER 1 AND "x86_64" IN_LIST architectures)
+            target_compile_options(${target} PRIVATE "SHELL:-Xarch_x86_64 -mavx")
+        elseif(architectures STREQUAL "x86_64")
             target_compile_options(${target} PRIVATE -mavx)
         endif()
     endif()
@@ -151,12 +157,13 @@ function(xybass_add_test_app target)
             XYBassDsp
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)
-    xybass_compile_options(${target})
 
     # Tests only ever run on the build machine, so one architecture slice is enough.
     if(APPLE)
         set_target_properties(${target} PROPERTIES OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}")
     endif()
+
+    xybass_compile_options(${target})
 endfunction()
 
 xybass_add_test_app(XYBassTests

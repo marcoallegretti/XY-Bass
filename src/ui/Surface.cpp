@@ -256,8 +256,8 @@ void drawIndicatorLamp (juce::Graphics& g, juce::Rectangle<float> bounds, const 
 
 juce::Image renderChassis (juce::Rectangle<int> bounds, const Theme& theme, float scale)
 {
-    juce::Image image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt (bounds.getWidth() * scale)),
-                       juce::jmax (1, juce::roundToInt (bounds.getHeight() * scale)), true);
+    juce::Image image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt ((float) bounds.getWidth() * scale)),
+                       juce::jmax (1, juce::roundToInt ((float) bounds.getHeight() * scale)), true);
 
     juce::Graphics g (image);
     g.addTransform (juce::AffineTransform::scale (scale));

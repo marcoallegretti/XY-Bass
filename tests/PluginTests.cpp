@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "TestSuites.h"
 
 #include <iostream>
 #include <vector>

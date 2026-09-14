@@ -1,4 +1,5 @@
 #include "TestSignals.h"
+#include "TestSuites.h"
 
 #include <iostream>
 
@@ -368,8 +369,6 @@ void testSubharmonicGating()
     check (lowAmount < 0.01, "notes that would fall below the useful range are excluded");
 }
 
-} // namespace
-
 void testStabilityReportsTracking()
 {
     section ("stability reflects tracking, not stillness");
@@ -404,6 +403,8 @@ void testStabilityReportsTracking()
     check (lockedStability > 0.75, "a tracked tone reports high stability");
     check (stuckStability < 0.5, "a tracker that has stopped following the source reports low stability");
 }
+
+} // namespace
 
 int runAnalysisTests()
 {

@@ -21,7 +21,7 @@ private:
                           const juce::String& parameterId, const juce::String& tip);
     void renderChassis();
 
-    XYBassProcessor& processor;
+    XYBassProcessor& bassProcessor;
     xyui::Theme theme;
     xyui::SeriesLookAndFeel lookAndFeel;
     juce::TooltipWindow tooltips { this, 620 };

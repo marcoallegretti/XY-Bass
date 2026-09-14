@@ -26,7 +26,7 @@ juce::String aboutText()
 
 XYBassEditor::XYBassEditor (XYBassProcessor& owner)
     : juce::AudioProcessorEditor (owner),
-      processor (owner),
+      bassProcessor (owner),
       theme (xyui::seriesTheme().withAccent (juce::Colour (0xffe0954a))),
       lookAndFeel (theme),
       pad (*owner.getValueTreeState().getParameter (xyb::ids::positionX),
@@ -52,7 +52,7 @@ XYBassEditor::XYBassEditor (XYBassProcessor& owner)
     for (auto* button : { &autoGainButton, &deltaButton, &bypassButton })
         addAndMakeVisible (button);
 
-    auto& state = processor.getValueTreeState();
+    auto& state = bassProcessor.getValueTreeState();
     inputAttachment = std::make_unique<SliderAttachment> (state, xyb::ids::input, inputSlider);
     mixAttachment = std::make_unique<SliderAttachment> (state, xyb::ids::mix, mixSlider);
     outputAttachment = std::make_unique<SliderAttachment> (state, xyb::ids::output, outputSlider);
@@ -84,7 +84,7 @@ void XYBassEditor::configureRotary (juce::Slider& slider, juce::Label& label, co
     slider.setTitle (text);
     slider.setTooltip (tip);
 
-    if (auto* parameter = processor.getValueTreeState().getParameter (parameterId))
+    if (auto* parameter = bassProcessor.getValueTreeState().getParameter (parameterId))
         slider.setDoubleClickReturnValue (true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
 
     addAndMakeVisible (slider);
@@ -204,7 +204,7 @@ void XYBassEditor::paint (juce::Graphics& g)
 
 void XYBassEditor::resized()
 {
-    auto stored = processor.getValueTreeState().state;
+    auto stored = bassProcessor.getValueTreeState().state;
 
     if ((int) stored.getProperty ("editorWidth", 0) != getWidth()
         || (int) stored.getProperty ("editorHeight", 0) != getHeight())
@@ -253,7 +253,7 @@ void XYBassEditor::resized()
 
 void XYBassEditor::timerCallback()
 {
-    const auto& meters = processor.getMeters();
+    const auto& meters = bassProcessor.getMeters();
     const auto confidence = meters.confidence.load (std::memory_order_relaxed);
     const auto fundamental = meters.fundamental.load (std::memory_order_relaxed);
 
@@ -295,7 +295,7 @@ void XYBassEditor::showContextMenu()
     const auto& factory = xyb::getFactoryPresets();
 
     for (int i = 0; i < (int) factory.size(); ++i)
-        presets.addItem (100 + i, factory[(size_t) i].name, true, processor.getCurrentProgram() == i);
+        presets.addItem (100 + i, factory[(size_t) i].name, true, bassProcessor.getCurrentProgram() == i);
 
     menu.addSubMenu ("Presets", presets);
     menu.addSeparator();
@@ -306,7 +306,7 @@ void XYBassEditor::showContextMenu()
                         {
                             if (result == 1)
                             {
-                                auto& state = processor.getValueTreeState();
+                                auto& state = bassProcessor.getValueTreeState();
 
                                 for (auto* id : { xyb::ids::positionX, xyb::ids::positionY })
                                     if (auto* parameter = state.getParameter (id))
@@ -329,7 +329,7 @@ void XYBassEditor::showContextMenu()
                             }
                             else if (result >= 100)
                             {
-                                processor.setCurrentProgram (result - 100);
+                                bassProcessor.setCurrentProgram (result - 100);
                             }
                         });
 }

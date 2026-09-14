@@ -1,4 +1,5 @@
 #include "TestSignals.h"
+#include "TestSuites.h"
 
 #include <iostream>
 
