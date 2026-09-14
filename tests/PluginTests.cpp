@@ -115,6 +115,19 @@ void testStateRoundTrip()
     check (destination.getCurrentProgram() == source.getCurrentProgram(),
            "the selected program survives a state round trip");
 
+    XYBassProcessor switches;
+    auto& switchState = switches.getValueTreeState();
+    juce::MemoryBlock saved;
+    switches.getStateInformation (saved);
+
+    switchState.getParameter (xyb::ids::autoGain)->setValueNotifyingHost (0.877f);
+    switchState.getParameter (xyb::ids::delta)->setValueNotifyingHost (0.3f);
+    switches.setStateInformation (saved.getData(), (int) saved.getSize());
+
+    check (juce::exactlyEqual (valueOf (switchState, xyb::ids::autoGain), 1.0f)
+               && juce::exactlyEqual (valueOf (switchState, xyb::ids::delta), 0.0f),
+           "restoring a state lands switches exactly on their saved values");
+
     XYBassProcessor untouched;
     untouched.setStateInformation (block.getData(), 3);
     check (juce::exactlyEqual (untouched.getValueTreeState().getParameter (xyb::ids::positionX)->getValue(), 0.5f),

@@ -265,6 +265,17 @@ void XYBassProcessor::setStateInformation (const void* data, int sizeInBytes)
     currentProgram = juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("program", 0));
     parameters.replaceState (state);
 
+    // A switch keeps the raw value a host wrote, and replaceState skips parameters whose
+    // snapped value is unchanged, so an off-grid value would otherwise survive the restore.
+    for (auto* id : { ids::autoGain, ids::delta, ids::bypass })
+    {
+        auto* parameter = parameters.getParameter (id);
+        const auto target = parameter->convertTo0to1 (parameter->convertFrom0to1 (parameter->getValue()));
+
+        if (! juce::exactlyEqual (parameter->getValue(), target))
+            parameter->setValueNotifyingHost (target);
+    }
+
     updateHostDisplay (juce::AudioProcessorListener::ChangeDetails{}.withProgramChanged (true));
 }
 
