@@ -59,7 +59,7 @@ private:
     {
         void setCutoff (double newSampleRate, float frequency) noexcept
         {
-            if (frequency == cutoff && newSampleRate == rate)
+            if (juce::exactlyEqual (frequency, cutoff) && juce::exactlyEqual (newSampleRate, rate))
                 return;
 
             cutoff = frequency;

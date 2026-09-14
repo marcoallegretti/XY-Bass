@@ -54,9 +54,9 @@ void testParameterLayout()
     check (processor.getBypassParameter() != nullptr, "the host sees a bypass parameter");
     check (processor.getParameters().size() == 8, "the plugin exposes exactly the intended parameters");
 
-    check (state.getParameter (xyb::ids::positionX)->getValue() == 0.5f, "x starts centred");
-    check (state.getParameter (xyb::ids::positionY)->getValue() == 0.5f, "y starts centred");
-    check (state.getParameter (xyb::ids::mix)->getValue() == 1.0f, "mix starts fully wet");
+    check (juce::exactlyEqual (state.getParameter (xyb::ids::positionX)->getValue(), 0.5f), "x starts centred");
+    check (juce::exactlyEqual (state.getParameter (xyb::ids::positionY)->getValue(), 0.5f), "y starts centred");
+    check (juce::exactlyEqual (state.getParameter (xyb::ids::mix)->getValue(), 1.0f), "mix starts fully wet");
 }
 
 void testBusLayouts()
@@ -108,16 +108,16 @@ void testStateRoundTrip()
            "y survives a state round trip");
     check (std::abs (valueOf (target, xyb::ids::mix) - valueOf (sourceState, xyb::ids::mix)) < 1.0e-6f,
            "mix survives a state round trip");
-    check (valueOf (target, xyb::ids::delta) == valueOf (sourceState, xyb::ids::delta),
+    check (juce::exactlyEqual (valueOf (target, xyb::ids::delta), valueOf (sourceState, xyb::ids::delta)),
            "delta survives a state round trip");
-    check (valueOf (target, xyb::ids::autoGain) == valueOf (sourceState, xyb::ids::autoGain),
+    check (juce::exactlyEqual (valueOf (target, xyb::ids::autoGain), valueOf (sourceState, xyb::ids::autoGain)),
            "auto gain survives a state round trip");
     check (destination.getCurrentProgram() == source.getCurrentProgram(),
            "the selected program survives a state round trip");
 
     XYBassProcessor untouched;
     untouched.setStateInformation (block.getData(), 3);
-    check (untouched.getValueTreeState().getParameter (xyb::ids::positionX)->getValue() == 0.5f,
+    check (juce::exactlyEqual (untouched.getValueTreeState().getParameter (xyb::ids::positionX)->getValue(), 0.5f),
            "a truncated state is ignored");
 }
 
@@ -272,8 +272,8 @@ void testVariableBlockSizes()
     report ("dry path error with ragged blocks", dryRaggedError);
     report ("dry path error with oversized blocks", dryOversizedError);
 
-    check (dryRaggedError == 0.0, "the delay compensated dry path is independent of the block schedule");
-    check (dryOversizedError == 0.0, "the delay compensated dry path is independent of oversized blocks");
+    check (juce::exactlyEqual (dryRaggedError, 0.0), "the delay compensated dry path is independent of the block schedule");
+    check (juce::exactlyEqual (dryOversizedError, 0.0), "the delay compensated dry path is independent of oversized blocks");
 
     const auto reference = renderWith (uniform, 1.0f, false);
     const auto raggedWet = renderWith (ragged, 1.0f, false);
@@ -285,7 +285,7 @@ void testVariableBlockSizes()
     report ("wet output error with ragged blocks", raggedError);
     report ("wet output error with oversized blocks", oversizedError);
 
-    check (oversizedError == 0.0, "the wet path is unaffected by oversized host blocks");
+    check (juce::exactlyEqual (oversizedError, 0.0), "the wet path is unaffected by oversized host blocks");
     check (raggedError < 0.02, "block rate control granularity stays far below the signal level");
 
     int latency = 0;
@@ -326,7 +326,7 @@ void testEditorLifecycle()
     processor.setPlayConfigDetails (2, 2, 48000.0, 256);
     processor.prepareToPlay (48000.0, 256);
 
-    auto* editor = processor.createEditorIfNeeded();
+    auto* editor = processor.createEditorAndMakeActive();
     check (editor != nullptr, "the processor creates an editor");
 
     if (editor != nullptr)
@@ -349,7 +349,7 @@ void testEditorLifecycle()
     processor.editorBeingDeleted (editor);
     delete editor;
 
-    auto* second = processor.createEditorIfNeeded();
+    auto* second = processor.createEditorAndMakeActive();
     check (second != nullptr, "the editor can be reopened");
     processor.editorBeingDeleted (second);
     delete second;
@@ -439,7 +439,7 @@ void testFactoryPresets()
 
 } // namespace
 
-int main()
+int runPluginTests()
 {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
 

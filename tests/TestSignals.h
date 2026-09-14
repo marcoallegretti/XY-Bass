@@ -184,23 +184,23 @@ inline void fillNoise (Buffer& buffer, float amplitude, int seed)
 
 inline void fillFullMix (Buffer& buffer, double sampleRate, float amplitude)
 {
-    fillKick (buffer, sampleRate, amplitude * 0.55, 0.5);
+    fillKick (buffer, sampleRate, (float) (amplitude * 0.55), 0.5);
 
     Buffer bass = makeBuffer (buffer.getNumChannels(), buffer.getNumSamples());
-    fillNotePattern (bass, 61.7, sampleRate, amplitude * 0.45, 0.25);
+    fillNotePattern (bass, 61.7, sampleRate, (float) (amplitude * 0.45), 0.25);
 
     Buffer counter = makeBuffer (buffer.getNumChannels(), buffer.getNumSamples());
-    fillNotePattern (counter, 92.5, sampleRate, amplitude * 0.3, 0.375);
+    fillNotePattern (counter, 92.5, sampleRate, (float) (amplitude * 0.3), 0.375);
 
     Buffer harmony = makeBuffer (buffer.getNumChannels(), buffer.getNumSamples());
-    addSine (harmony, 233.1, sampleRate, amplitude * 0.16);
-    addSine (harmony, 349.2, sampleRate, amplitude * 0.13);
-    addSine (harmony, 523.3, sampleRate, amplitude * 0.11);
-    addSine (harmony, 784.0, sampleRate, amplitude * 0.08);
-    addSine (harmony, 1174.7, sampleRate, amplitude * 0.05);
+    addSine (harmony, 233.1, sampleRate, (float) (amplitude * 0.16));
+    addSine (harmony, 349.2, sampleRate, (float) (amplitude * 0.13));
+    addSine (harmony, 523.3, sampleRate, (float) (amplitude * 0.11));
+    addSine (harmony, 784.0, sampleRate, (float) (amplitude * 0.08));
+    addSine (harmony, 1174.7, sampleRate, (float) (amplitude * 0.05));
 
     Buffer hats = makeBuffer (buffer.getNumChannels(), buffer.getNumSamples());
-    fillNoise (hats, amplitude * 0.5, 4242);
+    fillNoise (hats, (float) (amplitude * 0.5), 4242);
 
     const auto hatPeriod = juce::jmax (1, (int) (0.125 * sampleRate));
 

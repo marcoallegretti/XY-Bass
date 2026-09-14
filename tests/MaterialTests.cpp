@@ -550,7 +550,7 @@ void testDcAndSubsonic()
 
 } // namespace
 
-int main()
+int runMaterialTests()
 {
     testMonoCompatibility();
     testStereoPreservation();

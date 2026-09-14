@@ -405,7 +405,7 @@ void testStabilityReportsTracking()
     check (stuckStability < 0.5, "a tracker that has stopped following the source reports low stability");
 }
 
-int main()
+int runAnalysisTests()
 {
     testPitchAccuracy();
     testMissingFundamental();

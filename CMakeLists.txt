@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-set(XYBASS_VERSION "0.1.0" CACHE STRING "Plugin version, normally taken from the release tag")
+set(XYBASS_VERSION "0.1.0")
 
 project(XYBass VERSION ${XYBASS_VERSION} LANGUAGES C CXX)
 
@@ -8,25 +8,30 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(DEFINED ENV{CI})
+    set(XYBASS_INSTALL_DEFAULT OFF)
+else()
+    set(XYBASS_INSTALL_DEFAULT ON)
+endif()
+
+option(XYBASS_INSTALL_AFTER_BUILD "Copy the built plug-in into the user plug-in folders"
+       ${XYBASS_INSTALL_DEFAULT})
+
+if(MSVC)
+    add_compile_options(/permissive- /W4)
+else()
+    add_compile_options(-Wall -Wextra)
+endif()
+
 include(FetchContent)
 
 set(JUCE_ENABLE_MODULE_SOURCE_GROUPS ON CACHE BOOL "Enable JUCE module source groups" FORCE)
 
-FetchContent_Declare(
-    JUCE
-    URL https://github.com/juce-framework/JUCE/archive/refs/tags/8.0.13.zip
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    DOWNLOAD_NO_PROGRESS FALSE
-)
-
-FetchContent_Declare(
-    clap-juce-extensions
-    GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
-    GIT_TAG c1a5ad025f95d01e03267857fa8276ebeed16500
-    GIT_SUBMODULES_RECURSE TRUE
-)
-
-FetchContent_MakeAvailable(JUCE clap-juce-extensions)
+FetchContent_Declare(JUCE
+    URL https://codeload.github.com/juce-framework/JUCE/tar.gz/7c9d3783b127263d72bb65fe0a7e2dc8a02a7ac2
+    URL_HASH SHA256=488c4f6e2c121316d60801842dba87c44e5dbad4e661cb49bf806b49a38b6a5e
+    DOWNLOAD_EXTRACT_TIMESTAMP FALSE)
+FetchContent_MakeAvailable(JUCE)
 
 # AVX is enabled only where it measured faster: Clang gains from it, MSVC is unchanged
 # and GCC is slower. Every Mac that runs the deployment target has AVX.
@@ -44,234 +49,140 @@ function(xybass_compile_options target)
     endif()
 endfunction()
 
-set(XYBASS_FORMATS Standalone VST3)
+set(XYBASS_FORMATS VST3)
 
 if(APPLE)
     list(APPEND XYBASS_FORMATS AU)
 endif()
 
+# The Windows default target is under Program Files and needs an elevated shell.
+set(XYBASS_COPY_ARGUMENTS)
+
+if(XYBASS_INSTALL_AFTER_BUILD AND WIN32)
+    list(APPEND XYBASS_COPY_ARGUMENTS VST3_COPY_DIR "$ENV{LOCALAPPDATA}/Programs/Common/VST3")
+endif()
+
 juce_add_plugin(XYBass
+    PRODUCT_NAME "XY Bass"
+    VERSION "${XYBASS_VERSION}"
     COMPANY_NAME "23DSP"
     BUNDLE_ID com.23dsp.xybass
+    PLUGIN_MANUFACTURER_CODE Ttds
+    PLUGIN_CODE XyBs
+    FORMATS ${XYBASS_FORMATS}
+    VST3_CATEGORIES Fx Dynamics Distortion
+    AU_MAIN_TYPE kAudioUnitType_Effect
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
-    COPY_PLUGIN_AFTER_BUILD FALSE
-    PLUGIN_MANUFACTURER_CODE TDS3
-    PLUGIN_CODE XyBs
-    FORMATS ${XYBASS_FORMATS}
-    PRODUCT_NAME "XY Bass"
-    VERSION "${XYBASS_VERSION}"
-    VST3_CATEGORIES Fx Dynamics Distortion
-)
+    COPY_PLUGIN_AFTER_BUILD ${XYBASS_INSTALL_AFTER_BUILD}
+    ${XYBASS_COPY_ARGUMENTS})
 
-set(XYBASS_UI_SOURCES
-    src/PluginEditor.cpp
-    src/XYPad.cpp
-    src/ui/SeriesLookAndFeel.cpp
-    src/ui/Surface.cpp
-)
+# GCC runs LTO code generation serially, and warns about it, unless it may choose the job count.
+add_library(xybass_lto_flags INTERFACE)
 
-set(XYBASS_DSP_SOURCES
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(xybass_lto_flags INTERFACE $<$<CONFIG:Release>:-flto=auto>)
+    target_link_options(xybass_lto_flags INTERFACE $<$<CONFIG:Release>:-flto=auto>)
+else()
+    target_link_libraries(xybass_lto_flags INTERFACE juce::juce_recommended_lto_flags)
+endif()
+
+add_library(XYBassDsp STATIC
     src/BassEngine.cpp
     src/PitchTracker.cpp
     src/SourceAnalyser.cpp
     src/SpectralBalance.cpp
     src/SubEngine.cpp
     src/TranslateEngine.cpp
-    src/XYMapping.cpp
-)
+    src/XYMapping.cpp)
 
-target_sources(XYBass
-    PRIVATE
-        ${XYBASS_DSP_SOURCES}
-        ${XYBASS_UI_SOURCES}
-        src/PluginProcessor.cpp
-        src/Presets.cpp
-)
+target_include_directories(XYBassDsp PUBLIC src)
 
-target_compile_definitions(XYBass
+target_compile_definitions(XYBassDsp
     PUBLIC
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_WEB_BROWSER=0
-)
+        JUCE_WEB_BROWSER=0)
+
+# LTO is public so every consumer compiles and links the library the same way.
+target_link_libraries(XYBassDsp
+    PUBLIC
+        juce::juce_audio_basics
+        juce::juce_dsp
+        xybass_lto_flags
+    PRIVATE
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
+set_target_properties(XYBassDsp PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+xybass_compile_options(XYBassDsp)
+
+set(XYBASS_PLUGIN_SOURCES
+    src/PluginEditor.cpp
+    src/PluginProcessor.cpp
+    src/Presets.cpp
+    src/XYPad.cpp
+    src/ui/SeriesLookAndFeel.cpp
+    src/ui/Surface.cpp)
+
+target_sources(XYBass PRIVATE ${XYBASS_PLUGIN_SOURCES})
 
 target_link_libraries(XYBass
     PRIVATE
+        XYBassDsp
         juce::juce_audio_utils
-        juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
-        juce::juce_recommended_warning_flags
-)
-
-clap_juce_extensions_plugin(TARGET XYBass
-    CLAP_ID "com.23dsp.xybass"
-    CLAP_FEATURES audio-effect distortion mastering
-)
+        xybass_lto_flags
+        juce::juce_recommended_warning_flags)
 
 xybass_compile_options(XYBass)
 
 enable_testing()
 
-juce_add_console_app(XYBassTests
-    PRODUCT_NAME "XY Bass Tests"
-)
+function(xybass_add_test_app target)
+    juce_add_console_app(${target})
+    target_sources(${target} PRIVATE ${ARGN})
+    target_link_libraries(${target}
+        PRIVATE
+            XYBassDsp
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+    xybass_compile_options(${target})
 
-target_sources(XYBassTests
-    PRIVATE
-        ${XYBASS_DSP_SOURCES}
-        tests/EngineTests.cpp
-)
+    # Tests only ever run on the build machine, so one architecture slice is enough.
+    if(APPLE)
+        set_target_properties(${target} PROPERTIES OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    endif()
+endfunction()
 
-target_include_directories(XYBassTests PRIVATE src)
+xybass_add_test_app(XYBassTests
+    tests/TestMain.cpp
+    tests/EngineTests.cpp
+    tests/AnalysisTests.cpp
+    tests/MaterialTests.cpp
+    tests/PluginTests.cpp
+    ${XYBASS_PLUGIN_SOURCES})
 
+# The plug-in's definitions would redefine the console app's JUCE_STANDALONE_APPLICATION.
 target_compile_definitions(XYBassTests
     PRIVATE
-        JUCE_USE_CURL=0
-        JUCE_WEB_BROWSER=0
-)
+        $<FILTER:$<TARGET_PROPERTY:XYBass,INTERFACE_COMPILE_DEFINITIONS>,EXCLUDE,^JUCE_STANDALONE_APPLICATION=>)
 
-target_link_libraries(XYBassTests
-    PRIVATE
-        juce::juce_dsp
-        juce::juce_recommended_config_flags
-        juce::juce_recommended_warning_flags
-)
-
-xybass_compile_options(XYBassTests)
+target_link_libraries(XYBassTests PRIVATE juce::juce_audio_utils)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(XYBassTests PRIVATE
         -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc)
 endif()
 
-add_test(NAME xy-bass-engine COMMAND XYBassTests)
+foreach(suite IN ITEMS engine analysis material plugin)
+    add_test(NAME xy-bass-${suite} COMMAND XYBassTests ${suite})
+endforeach()
 
-juce_add_console_app(XYBassAnalysisTests
-    PRODUCT_NAME "XY Bass Analysis Tests"
-)
-
-target_sources(XYBassAnalysisTests
-    PRIVATE
-        ${XYBASS_DSP_SOURCES}
-        tests/AnalysisTests.cpp
-)
-
-target_include_directories(XYBassAnalysisTests PRIVATE src)
-
-target_compile_definitions(XYBassAnalysisTests
-    PRIVATE
-        JUCE_USE_CURL=0
-        JUCE_WEB_BROWSER=0
-)
-
-target_link_libraries(XYBassAnalysisTests
-    PRIVATE
-        juce::juce_dsp
-        juce::juce_recommended_config_flags
-        juce::juce_recommended_warning_flags
-)
-
-xybass_compile_options(XYBassAnalysisTests)
-
-add_test(NAME xy-bass-analysis COMMAND XYBassAnalysisTests)
-
-juce_add_console_app(XYBassMaterialTests
-    PRODUCT_NAME "XY Bass Material Tests"
-)
-
-target_sources(XYBassMaterialTests
-    PRIVATE
-        ${XYBASS_DSP_SOURCES}
-        tests/MaterialTests.cpp
-)
-
-target_include_directories(XYBassMaterialTests PRIVATE src)
-
-target_compile_definitions(XYBassMaterialTests
-    PRIVATE
-        JUCE_USE_CURL=0
-        JUCE_WEB_BROWSER=0
-)
-
-target_link_libraries(XYBassMaterialTests
-    PRIVATE
-        juce::juce_dsp
-        juce::juce_recommended_config_flags
-        juce::juce_recommended_warning_flags
-)
-
-xybass_compile_options(XYBassMaterialTests)
-
-add_test(NAME xy-bass-material COMMAND XYBassMaterialTests)
-
-juce_add_console_app(XYBassPerformanceTests
-    PRODUCT_NAME "XY Bass Performance Tests"
-)
-
-target_sources(XYBassPerformanceTests
-    PRIVATE
-        ${XYBASS_DSP_SOURCES}
-        tests/PerformanceTests.cpp
-)
-
-target_include_directories(XYBassPerformanceTests PRIVATE src)
-
-target_compile_definitions(XYBassPerformanceTests
-    PRIVATE
-        JUCE_USE_CURL=0
-        JUCE_WEB_BROWSER=0
-)
-
-target_link_libraries(XYBassPerformanceTests
-    PRIVATE
-        juce::juce_dsp
-        juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
-        juce::juce_recommended_warning_flags
-)
-
-xybass_compile_options(XYBassPerformanceTests)
-
+xybass_add_test_app(XYBassPerformanceTests tests/PerformanceTests.cpp)
 add_test(NAME xy-bass-performance COMMAND XYBassPerformanceTests)
 set_tests_properties(xy-bass-performance PROPERTIES LABELS performance)
-
-
-juce_add_console_app(XYBassPluginTests
-    PRODUCT_NAME "XY Bass Plugin Tests"
-)
-
-target_sources(XYBassPluginTests
-    PRIVATE
-        ${XYBASS_DSP_SOURCES}
-        ${XYBASS_UI_SOURCES}
-        src/PluginProcessor.cpp
-        src/Presets.cpp
-        tests/PluginTests.cpp
-)
-
-target_include_directories(XYBassPluginTests PRIVATE src)
-
-target_compile_definitions(XYBassPluginTests
-    PRIVATE
-        $<TARGET_PROPERTY:XYBass,INTERFACE_COMPILE_DEFINITIONS>
-        JUCE_USE_CURL=0
-        JUCE_WEB_BROWSER=0
-)
-
-target_link_libraries(XYBassPluginTests
-    PRIVATE
-        juce::juce_audio_utils
-        juce::juce_dsp
-        juce::juce_recommended_config_flags
-        juce::juce_recommended_warning_flags
-)
-
-xybass_compile_options(XYBassPluginTests)
-
-add_test(NAME xy-bass-plugin COMMAND XYBassPluginTests)

@@ -611,9 +611,9 @@ void testFilterReplacements()
     juce::Random random (0xf17e);
     auto worstBiquad = 0.0;
 
-    const auto designs = { juce::dsp::IIR::Coefficients<float>::makeLowPass (48000.0, 1500.0, 0.54),
-                           juce::dsp::IIR::Coefficients<float>::makeLowPass (44100.0, 1470.0, 1.31),
-                           juce::dsp::IIR::Coefficients<float>::makeHighPass (96000.0, 20.0, 0.7071) };
+    const auto designs = { juce::dsp::IIR::Coefficients<float>::makeLowPass (48000.0, 1500.0f, 0.54f),
+                           juce::dsp::IIR::Coefficients<float>::makeLowPass (44100.0, 1470.0f, 1.31f),
+                           juce::dsp::IIR::Coefficients<float>::makeHighPass (96000.0, 20.0f, 0.7071f) };
 
     for (const auto& design : designs)
     {
@@ -789,7 +789,7 @@ void testHalfbandOversampler()
     check (latencyMatches, "the oversampler reports the same latency as JUCE");
     check (worstUp < 1.0e-6, "upsampling reproduces JUCE's halfband filter");
     check (worstDown < 1.0e-6, "downsampling reproduces JUCE's halfband filter");
-    check (worstPassThrough == 0.0, "above 100 kHz the signal passes through untouched");
+    check (juce::exactlyEqual (worstPassThrough, 0.0), "above 100 kHz the signal passes through untouched");
 }
 
 void testDegenerateSetup()
@@ -901,7 +901,7 @@ void testSilenceAndDenormals()
 
     auto pureSilence = makeBuffer (2, 48000);
     render (fresh, pureSilence, 256);
-    check (peak (pureSilence) == 0.0, "silence into a reset engine produces exact zero");
+    check (juce::exactlyEqual (peak (pureSilence), 0.0), "silence into a reset engine produces exact zero");
 
     xyb::BassEngine decaying;
     decaying.prepare (48000.0, 256, 2);
@@ -1497,7 +1497,7 @@ void testDeterminism()
     for (int i = 0; i < first.getNumSamples(); ++i)
         worst = juce::jmax (worst, (double) std::abs (first.getSample (0, i) - second.getSample (0, i)));
 
-    check (worst == 0.0, "identical settings produce identical output");
+    check (juce::exactlyEqual (worst, 0.0), "identical settings produce identical output");
 }
 
 void testAutoGain()
@@ -1688,7 +1688,7 @@ void operator delete[] (void* pointer) noexcept { std::free (pointer); }
 void operator delete (void* pointer, size_t) noexcept { std::free (pointer); }
 void operator delete[] (void* pointer, size_t) noexcept { std::free (pointer); }
 
-int main()
+int runEngineTests()
 {
     installAllocationHooks();
 
