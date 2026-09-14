@@ -3,6 +3,69 @@
 namespace xyb
 {
 
+namespace
+{
+
+float squaredDistance (const float* a, const float* b, int count) noexcept
+{
+    auto i = 0;
+    auto sum = 0.0f;
+
+   #if JUCE_INTEL && JUCE_USE_SIMD && defined (__AVX__)
+    auto accumulator = _mm256_setzero_ps();
+
+    for (; i + 8 <= count; i += 8)
+    {
+        const auto delta = _mm256_sub_ps (_mm256_loadu_ps (a + i), _mm256_loadu_ps (b + i));
+        accumulator = _mm256_add_ps (accumulator, _mm256_mul_ps (delta, delta));
+    }
+
+    float lanes[8];
+    _mm256_storeu_ps (lanes, accumulator);
+
+    for (auto lane : lanes)
+        sum += lane;
+   #elif JUCE_INTEL && JUCE_USE_SIMD
+    auto accumulator = _mm_setzero_ps();
+
+    for (; i + 4 <= count; i += 4)
+    {
+        const auto delta = _mm_sub_ps (_mm_loadu_ps (a + i), _mm_loadu_ps (b + i));
+        accumulator = _mm_add_ps (accumulator, _mm_mul_ps (delta, delta));
+    }
+
+    float lanes[4];
+    _mm_storeu_ps (lanes, accumulator);
+
+    for (auto lane : lanes)
+        sum += lane;
+   #elif JUCE_ARM && JUCE_USE_SIMD
+    auto accumulator = vdupq_n_f32 (0.0f);
+
+    for (; i + 4 <= count; i += 4)
+    {
+        const auto delta = vsubq_f32 (vld1q_f32 (a + i), vld1q_f32 (b + i));
+        accumulator = vaddq_f32 (accumulator, vmulq_f32 (delta, delta));
+    }
+
+    float lanes[4];
+    vst1q_f32 (lanes, accumulator);
+
+    for (auto lane : lanes)
+        sum += lane;
+   #endif
+
+    for (; i < count; ++i)
+    {
+        const auto delta = a[i] - b[i];
+        sum += delta * delta;
+    }
+
+    return sum;
+}
+
+} // namespace
+
 void PitchTracker::prepare (double sampleRate)
 {
     decimationFactor = juce::jmax (1, (int) std::round (sampleRate / 4000.0));
@@ -133,13 +196,7 @@ void PitchTracker::advanceSearch (int lagBudget) noexcept
 
     while (searching && lagBudget-- > 0)
     {
-        float sum = 0.0f;
-
-        for (int i = 0; i < windowLength; ++i)
-        {
-            const auto delta = data[i] - data[i + currentLag];
-            sum += delta * delta;
-        }
+        const auto sum = squaredDistance (data, data + currentLag, windowLength);
 
         difference[(size_t) currentLag] = sum;
         runningSum += sum;
