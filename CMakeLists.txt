@@ -28,20 +28,19 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(JUCE clap-juce-extensions)
 
+# AVX is enabled only where it measured faster: Clang gains from it, MSVC is unchanged
+# and GCC is slower. Every Mac that runs the deployment target has AVX.
 function(xybass_compile_options target)
     if(MSVC)
-        target_compile_options(${target} PRIVATE /utf-8 /arch:AVX)
+        target_compile_options(${target} PRIVATE /utf-8)
     elseif(APPLE)
         if(CMAKE_OSX_ARCHITECTURES)
-            # Only the Intel slice of a universal build can take AVX.
             if("x86_64" IN_LIST CMAKE_OSX_ARCHITECTURES)
                 target_compile_options(${target} PRIVATE "SHELL:-Xarch_x86_64 -mavx")
             endif()
         elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
             target_compile_options(${target} PRIVATE -mavx)
         endif()
-    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        target_compile_options(${target} PRIVATE -mavx)
     endif()
 endfunction()
 
