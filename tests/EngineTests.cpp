@@ -840,7 +840,7 @@ void testStability()
 {
     section ("stability across the pad");
 
-    const std::array<double, 4> rates { { 44100.0, 48000.0, 96000.0, 192000.0 } };
+    const std::array<double, 5> rates { { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 } };
 
     for (auto sampleRate : rates)
     {
@@ -1578,6 +1578,251 @@ void testHotInput()
     check (peak (buffer) < 1.05, "output ceiling holds with extreme input");
 }
 
+struct Corner
+{
+    float x;
+    float y;
+    const char* name;
+};
+
+const Corner corners[] = { { 0.5f, 0.5f, "centre" }, { 0.0f, 0.0f, "clean sub" }, { 1.0f, 1.0f, "dirty translate" } };
+
+xyb::BassEngine::Parameters parametersFor (const Corner& corner, float mix = 1.0f)
+{
+    auto parameters = position (corner.x, corner.y);
+    parameters.mix = mix;
+    return parameters;
+}
+
+void addInto (Buffer& target, const Buffer& source)
+{
+    for (int channel = 0; channel < target.getNumChannels(); ++channel)
+        target.addFrom (channel, 0, source, channel, 0, target.getNumSamples());
+}
+
+void renderSchedule (xyb::BassEngine& engine, Buffer& buffer, const std::vector<int>& schedule)
+{
+    float* pointers[2] = { nullptr, nullptr };
+    auto offset = 0;
+    auto index = 0;
+
+    while (offset < buffer.getNumSamples())
+    {
+        const auto count = juce::jmin (schedule[(size_t) index++ % schedule.size()], buffer.getNumSamples() - offset);
+
+        for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+            pointers[channel] = buffer.getWritePointer (channel) + offset;
+
+        Buffer view (pointers, buffer.getNumChannels(), count);
+        engine.process (view);
+        offset += count;
+    }
+}
+
+double peakBetween (const Buffer& buffer, int start, int end)
+{
+    auto result = 0.0;
+
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        for (int i = juce::jmax (0, start); i < juce::jmin (end, buffer.getNumSamples()); ++i)
+            result = juce::jmax (result, (double) std::abs (buffer.getSample (channel, i)));
+
+    return result;
+}
+
+void testDryPathIsSampleExact()
+{
+    section ("dry path at mix zero");
+
+    auto worst = 0.0;
+    auto latencyReported = true;
+
+    for (const auto sampleRate : { 44100.0, 48000.0, 96000.0 })
+    {
+        for (const auto& corner : corners)
+        {
+            xyb::BassEngine engine;
+            engine.setParameters (parametersFor (corner, 0.0f));
+            engine.prepare (sampleRate, 256, 2);
+
+            auto buffer = makeBuffer (2, (int) sampleRate);
+            fillKick (buffer, sampleRate, 0.4f);
+            auto noise = makeBuffer (2, buffer.getNumSamples());
+            fillNoise (noise, 0.2f, 7);
+            addInto (buffer, noise);
+
+            Buffer input (buffer);
+            render (engine, buffer, 256);
+
+            const auto latency = engine.getLatencySamples();
+            latencyReported = latencyReported && latency > 0;
+
+            for (int channel = 0; channel < 2; ++channel)
+                for (int i = latency; i < buffer.getNumSamples(); ++i)
+                    worst = juce::jmax (worst, (double) std::abs (buffer.getSample (channel, i)
+                                                                  - input.getSample (channel, i - latency)));
+        }
+    }
+
+    report ("worst dry path difference (dB)", juce::Decibels::gainToDecibels (worst, -200.0));
+    check (latencyReported, "the oversampled path reports its latency");
+    check (juce::exactlyEqual (worst, 0.0), "mix at zero returns the input sample for sample at every corner and rate");
+}
+
+void testSilenceIsSilent()
+{
+    section ("silence in, silence out");
+
+    auto loudest = 0.0;
+
+    for (const auto sampleRate : { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 })
+    {
+        for (const auto& corner : corners)
+        {
+            xyb::BassEngine engine;
+            engine.setParameters (parametersFor (corner));
+            engine.prepare (sampleRate, 256, 2);
+
+            auto buffer = makeBuffer (2, (int) (sampleRate * 2.0));
+            render (engine, buffer, 256);
+            loudest = juce::jmax (loudest, peak (buffer));
+        }
+    }
+
+    report ("loudest sample from silence (dB)", juce::Decibels::gainToDecibels (loudest, -200.0));
+    check (juce::exactlyEqual (loudest, 0.0), "silence in gives exact silence out at every corner and rate");
+}
+
+void testBlockScheduleIndependence()
+{
+    section ("host block schedule");
+
+    const std::vector<std::vector<int>> schedules { { 32 }, { 64 }, { 512 }, { 1, 7, 64, 333, 512, 2048, 5, 256 } };
+    auto worst = 0.0;
+
+    for (const auto sampleRate : { 44100.0, 48000.0 })
+    {
+        for (const auto& corner : corners)
+        {
+            auto source = makeBuffer (2, (int) (sampleRate * 3.0));
+            fillKick (source, sampleRate, 0.45f);
+            auto tone = makeBuffer (2, source.getNumSamples());
+            fillSine (tone, 55.0, sampleRate, 0.25f);
+            addInto (source, tone);
+
+            Buffer reference (source);
+
+            {
+                xyb::BassEngine engine;
+                engine.setParameters (parametersFor (corner));
+                engine.prepare (sampleRate, 2048, 2);
+                render (engine, reference, 256);
+            }
+
+            for (const auto& schedule : schedules)
+            {
+                Buffer rendered (source);
+                xyb::BassEngine engine;
+                engine.setParameters (parametersFor (corner));
+                engine.prepare (sampleRate, 2048, 2);
+                renderSchedule (engine, rendered, schedule);
+
+                for (int channel = 0; channel < 2; ++channel)
+                    for (int i = 0; i < rendered.getNumSamples(); ++i)
+                        worst = juce::jmax (worst, (double) std::abs (rendered.getSample (channel, i)
+                                                                      - reference.getSample (channel, i)));
+            }
+        }
+    }
+
+    report ("worst difference between block schedules (dB)", juce::Decibels::gainToDecibels (worst, -200.0));
+    check (juce::exactlyEqual (worst, 0.0), "output is identical for every host block schedule");
+}
+
+void testStartupHasNoLevelBurst()
+{
+    section ("startup level");
+
+    auto worstBurst = -1000.0;
+
+    for (const auto& corner : corners)
+    {
+        xyb::BassEngine engine;
+        engine.setParameters (parametersFor (corner));
+        engine.prepare (48000.0, 256, 2);
+
+        auto buffer = makeBuffer (2, 48000 * 3);
+        fillSine (buffer, 55.0, 48000.0, 0.3f);
+        render (engine, buffer, 256);
+
+        const auto latency = engine.getLatencySamples();
+        const auto early = peakBetween (buffer, latency, latency + 4800);
+        const auto steady = peakBetween (buffer, 96000, 144000);
+
+        worstBurst = juce::jmax (worstBurst, relativeDb (early, steady));
+    }
+
+    report ("worst early peak over settled peak (dB)", worstBurst);
+    check (worstBurst < 3.0, "the first hundred milliseconds stay near the settled level");
+
+    auto lowest = 1000.0;
+    auto highest = -1000.0;
+
+    for (int offset = 0; offset < 256; offset += 8)
+    {
+        xyb::BassEngine engine;
+        engine.setParameters (parametersFor (corners[1]));
+        engine.prepare (48000.0, 256, 2);
+
+        auto buffer = makeBuffer (2, 48000 * 3);
+        auto tone = makeBuffer (2, buffer.getNumSamples() - offset);
+        fillSine (tone, 45.0, 48000.0, 0.2f);
+
+        for (int channel = 0; channel < 2; ++channel)
+            buffer.copyFrom (channel, offset, tone, channel, 0, tone.getNumSamples());
+
+        Buffer reference (buffer);
+        render (engine, buffer, 256);
+
+        const auto gain = relativeDb (magnitudeAt (buffer.getReadPointer (0) + 96000, 48000, 45.0, 48000.0),
+                                      magnitudeAt (reference.getReadPointer (0) + 96000, 48000, 45.0, 48000.0));
+        lowest = juce::jmin (lowest, gain);
+        highest = juce::jmax (highest, gain);
+    }
+
+    report ("settled gain spread across onset positions (dB)", highest - lowest);
+    check (highest - lowest < 1.0, "the settled level does not depend on where the first note lands");
+}
+
+void testImpulseDecay()
+{
+    section ("impulse decay");
+
+    auto worst = 0.0;
+
+    for (const auto sampleRate : { 44100.0, 48000.0, 96000.0 })
+    {
+        for (const auto& corner : corners)
+        {
+            xyb::BassEngine engine;
+            engine.setParameters (parametersFor (corner));
+            engine.prepare (sampleRate, 256, 2);
+
+            auto buffer = makeBuffer (2, (int) (sampleRate * 3.0));
+            const auto impulseAt = (int) (sampleRate * 0.1);
+
+            for (int channel = 0; channel < 2; ++channel)
+                buffer.setSample (channel, impulseAt, 0.5f);
+
+            render (engine, buffer, 256);
+            worst = juce::jmax (worst, peakBetween (buffer, impulseAt + (int) sampleRate, buffer.getNumSamples()));
+        }
+    }
+
+    report ("loudest sample one second after an impulse (dB)", juce::Decibels::gainToDecibels (worst, -200.0));
+    check (worst < 1.0e-5, "an impulse decays away instead of ringing");
+}
+
 void testRealtimeSafety()
 {
     section ("real time safety");
@@ -1714,6 +1959,11 @@ int runEngineTests()
     testDeterminism();
     testAutoGain();
     testHotInput();
+    testDryPathIsSampleExact();
+    testSilenceIsSilent();
+    testBlockScheduleIndependence();
+    testStartupHasNoLevelBurst();
+    testImpulseDecay();
     testRealtimeSafety();
 
     std::cout << std::endl

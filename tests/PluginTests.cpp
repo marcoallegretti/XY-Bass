@@ -286,7 +286,7 @@ void testVariableBlockSizes()
     report ("wet output error with oversized blocks", oversizedError);
 
     check (juce::exactlyEqual (oversizedError, 0.0), "the wet path is unaffected by oversized host blocks");
-    check (raggedError < 0.02, "block rate control granularity stays far below the signal level");
+    check (juce::exactlyEqual (raggedError, 0.0), "the wet path is independent of the host block schedule");
 
     int latency = 0;
 
