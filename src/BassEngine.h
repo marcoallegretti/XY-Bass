@@ -2,6 +2,7 @@
 
 #include "AutoGain.h"
 #include "BandSplitter.h"
+#include "HalfbandOversampler.h"
 #include "LowEndDynamics.h"
 #include "PitchTracker.h"
 #include "Saturator.h"
@@ -83,7 +84,7 @@ private:
     SpectralBalance spectralBalance;
     AutoGain autoGain;
 
-    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
+    HalfbandOversampler oversampler;
 
     juce::AudioBuffer<float> dryBuffer, saturationBuffer, parallelBuffer, monoBuffer;
     std::vector<ShaperControls> shaperControls;

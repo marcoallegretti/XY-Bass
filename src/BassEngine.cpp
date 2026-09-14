@@ -30,12 +30,8 @@ void BassEngine::prepare (double newSampleRate, int maximumBlockSize, int numCha
     const auto stages = sampleRate <= 100000.0 ? 1 : 0;
     oversamplingShift = stages;
 
-    oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
-        (size_t) preparedChannels, (size_t) stages,
-        juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple, true, true);
-
-    oversampler->initProcessing ((size_t) preparedBlockSize);
-    latencySamples = juce::roundToInt (oversampler->getLatencyInSamples());
+    oversampler.prepare (preparedChannels, preparedBlockSize, stages > 0);
+    latencySamples = oversampler.getLatencyInSamples();
 
     dryBuffer.setSize (preparedChannels, preparedBlockSize);
     saturationBuffer.setSize (preparedChannels, preparedBlockSize);
@@ -110,8 +106,7 @@ void BassEngine::reset()
     spectralBalance.reset();
     autoGain.reset();
 
-    if (oversampler != nullptr)
-        oversampler->reset();
+    oversampler.reset();
 
     dryBuffer.clear();
     saturationBuffer.clear();
@@ -222,7 +217,7 @@ void BassEngine::process (juce::AudioBuffer<float>& buffer)
     const auto numChannels = buffer.getNumChannels();
     const auto numSamples = buffer.getNumSamples();
 
-    if (oversampler == nullptr || preparedBlockSize <= 0)
+    if (! oversampler.isPrepared() || preparedBlockSize <= 0)
         return;
 
     if (numSamples <= preparedBlockSize)
@@ -375,7 +370,7 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
     {
         juce::dsp::AudioBlock<float> block (saturationBuffer.getArrayOfWritePointers(),
                                             (size_t) numChannels, 0, (size_t) numSamples);
-        auto upsampled = oversampler->processSamplesUp (block);
+        auto upsampled = oversampler.processSamplesUp (block);
 
         const auto factor = 1 << oversamplingShift;
 
@@ -393,7 +388,7 @@ void BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
             }
         }
 
-        oversampler->processSamplesDown (block);
+        oversampler.processSamplesDown (block);
     }
 
     parallelDelay.process (parallelBuffer, numSamples);

@@ -604,6 +604,111 @@ void testBandReconstruction()
     check (worst < 0.05, "the band split recombines to a flat magnitude response");
 }
 
+void testHalfbandOversampler()
+{
+    section ("halfband oversampler");
+
+    constexpr int maximumBlock = 512;
+    const int blockSizes[] = { 1, 7, 64, 512, 33, 256, 5, 511, 128, 2 };
+
+    auto worstUp = 0.0;
+    auto worstDown = 0.0;
+    auto worstPassThrough = 0.0;
+    auto latencyMatches = true;
+
+    for (int channels = 1; channels <= 2; ++channels)
+    {
+        for (int stages = 0; stages <= 1; ++stages)
+        {
+            juce::dsp::Oversampling<float> reference ((size_t) channels, (size_t) stages,
+                                                      juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple,
+                                                      true, true);
+            reference.initProcessing ((size_t) maximumBlock);
+
+            xyb::HalfbandOversampler candidate;
+            candidate.prepare (channels, maximumBlock, stages > 0);
+
+            latencyMatches = latencyMatches
+                             && candidate.getLatencyInSamples() == juce::roundToInt (reference.getLatencyInSamples());
+
+            juce::Random random (0x5eed + channels * 10 + stages);
+            const auto total = 20000;
+
+            Buffer referenceSignal (channels, total), candidateSignal (channels, total);
+
+            for (int channel = 0; channel < channels; ++channel)
+                for (int i = 0; i < total; ++i)
+                {
+                    const auto value = 0.6f * std::sin (0.013f * (float) i * (float) (channel + 1))
+                                       + 0.4f * (random.nextFloat() * 2.0f - 1.0f);
+                    referenceSignal.setSample (channel, i, value);
+                    candidateSignal.setSample (channel, i, value);
+                }
+
+            auto offset = 0;
+            auto index = 0;
+
+            while (offset < total)
+            {
+                if (offset >= total / 2 && offset - blockSizes[(size_t) ((index + 9) % 10)] < total / 2)
+                {
+                    reference.reset();
+                    candidate.reset();
+                }
+
+                const auto count = juce::jmin (blockSizes[(size_t) (index++ % 10)], total - offset);
+
+                juce::dsp::AudioBlock<float> referenceBlock (referenceSignal);
+                juce::dsp::AudioBlock<float> candidateBlock (candidateSignal);
+                referenceBlock = referenceBlock.getSubBlock ((size_t) offset, (size_t) count);
+                candidateBlock = candidateBlock.getSubBlock ((size_t) offset, (size_t) count);
+
+                auto referenceUp = reference.processSamplesUp (referenceBlock);
+                auto candidateUp = candidate.processSamplesUp (candidateBlock);
+
+                for (size_t channel = 0; channel < (size_t) channels; ++channel)
+                {
+                    auto* expected = referenceUp.getChannelPointer (channel);
+                    auto* actual = candidateUp.getChannelPointer (channel);
+
+                    for (size_t i = 0; i < referenceUp.getNumSamples(); ++i)
+                    {
+                        worstUp = juce::jmax (worstUp, (double) std::abs (expected[i] - actual[i]));
+                        expected[i] = std::tanh (3.0f * expected[i]);
+                        actual[i] = std::tanh (3.0f * actual[i]);
+                    }
+                }
+
+                reference.processSamplesDown (referenceBlock);
+                candidate.processSamplesDown (candidateBlock);
+
+                for (size_t channel = 0; channel < (size_t) channels; ++channel)
+                    for (size_t i = 0; i < (size_t) count; ++i)
+                    {
+                        const auto difference = (double) std::abs (referenceBlock.getSample ((int) channel, (int) i)
+                                                                   - candidateBlock.getSample ((int) channel, (int) i));
+
+                        if (stages > 0)
+                            worstDown = juce::jmax (worstDown, difference);
+                        else
+                            worstPassThrough = juce::jmax (worstPassThrough, difference);
+                    }
+
+                offset += count;
+            }
+        }
+    }
+
+    report ("worst upsampled difference from JUCE (dB)", juce::Decibels::gainToDecibels (worstUp, -200.0));
+    report ("worst downsampled difference from JUCE (dB)", juce::Decibels::gainToDecibels (worstDown, -200.0));
+    report ("worst pass-through difference from JUCE (dB)", juce::Decibels::gainToDecibels (worstPassThrough, -200.0));
+
+    check (latencyMatches, "the oversampler reports the same latency as JUCE");
+    check (worstUp < 1.0e-6, "upsampling reproduces JUCE's halfband filter");
+    check (worstDown < 1.0e-6, "downsampling reproduces JUCE's halfband filter");
+    check (worstPassThrough == 0.0, "above 100 kHz the signal passes through untouched");
+}
+
 void testDegenerateSetup()
 {
     section ("degenerate preparation");
@@ -1508,6 +1613,7 @@ int main()
     testBandReconstruction();
     testStability();
     testDegenerateSetup();
+    testHalfbandOversampler();
     testSilenceAndDenormals();
     testDcRejection();
     testDryPathAlignment();
