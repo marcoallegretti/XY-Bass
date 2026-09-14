@@ -8,6 +8,15 @@
  #define NOMINMAX
  #define WIN32_LEAN_AND_MEAN
  #include <windows.h>
+#elif JUCE_MAC
+ #include <pthread.h>
+
+extern "C"
+{
+    typedef void (malloc_logger_t) (uint32_t type, uintptr_t zone, uintptr_t size, uintptr_t extra,
+                                    uintptr_t result, uint32_t skippedFrames);
+    extern malloc_logger_t* malloc_logger;
+}
 #endif
 
 namespace
@@ -85,16 +94,29 @@ void installAllocationHooks()
     redirectImport ("realloc", (void*) trackedRealloc, (void**) &realRealloc);
 }
 
+#elif JUCE_MAC
+
+pthread_t hookedThread {};
+
+void logAllocation (uint32_t type, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uint32_t)
+{
+    constexpr uint32_t allocateEvent = 2;
+
+    // libmalloc reports every thread in the process; only the thread under test counts.
+    if ((type & allocateEvent) != 0 && pthread_equal (pthread_self(), hookedThread))
+        countAllocation();
+}
+
+void installAllocationHooks()
+{
+    hookedThread = pthread_self();
+    malloc_logger = logAllocation;
+}
+
 #else
 
 void installAllocationHooks() {}
 
-#endif
-
-#if JUCE_WINDOWS || defined (__linux__)
-constexpr bool kCountsSystemAllocator = true;
-#else
-constexpr bool kCountsSystemAllocator = false;
 #endif
 
 int failures = 0;
@@ -1409,10 +1431,7 @@ void testRealtimeSafety()
     report ("allocations seen for an audio buffer", viaSystemAllocator);
 
     check (viaOperatorNew > 0, "the allocation counter sees a standard allocation");
-
-    // juce::HeapBlock reaches std::malloc, which only the Windows hook intercepts.
-    if (kCountsSystemAllocator)
-        check (viaSystemAllocator > 0, "the allocation counter sees an audio buffer being sized");
+    check (viaSystemAllocator > 0, "the allocation counter sees an audio buffer being sized");
 }
 
 } // namespace
