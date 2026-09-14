@@ -378,13 +378,22 @@ public:
             auto* line = buffer.getWritePointer (channel);
             index = writeIndex;
 
+            auto readIndex = index - delay;
+
+            if (readIndex < 0)
+                readIndex += capacity;
+
             for (int i = 0; i < numSamples; ++i)
             {
-                const auto readIndex = (index + capacity - delay) % capacity;
                 const auto delayed = line[readIndex];
                 line[index] = data[i];
                 data[i] = delayed;
-                index = (index + 1) % capacity;
+
+                if (++index == capacity)
+                    index = 0;
+
+                if (++readIndex == capacity)
+                    readIndex = 0;
             }
         }
 
