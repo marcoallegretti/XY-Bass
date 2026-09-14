@@ -604,6 +604,89 @@ void testBandReconstruction()
     check (worst < 0.05, "the band split recombines to a flat magnitude response");
 }
 
+void testFilterReplacements()
+{
+    section ("filter replacements");
+
+    juce::Random random (0xf17e);
+    auto worstBiquad = 0.0;
+
+    const auto designs = { juce::dsp::IIR::Coefficients<float>::makeLowPass (48000.0, 1500.0, 0.54),
+                           juce::dsp::IIR::Coefficients<float>::makeLowPass (44100.0, 1470.0, 1.31),
+                           juce::dsp::IIR::Coefficients<float>::makeHighPass (96000.0, 20.0, 0.7071) };
+
+    for (const auto& design : designs)
+    {
+        juce::dsp::IIR::Filter<float> reference (design);
+        xyb::Biquad candidate;
+        candidate.setCoefficients (*design);
+
+        for (int i = 0; i < 48000; ++i)
+        {
+            const auto input = random.nextFloat() * 2.0f - 1.0f;
+            const auto difference = std::abs (reference.processSample (input) - candidate.process (input));
+            worstBiquad = juce::jmax (worstBiquad, (double) difference);
+        }
+    }
+
+    auto worstSplit = 0.0;
+
+    for (const auto sampleRate : { 44100.0, 48000.0, 96000.0 })
+    {
+        const juce::dsp::ProcessSpec spec { sampleRate, 256, 2 };
+
+        juce::dsp::LinkwitzRileyFilter<float> lowSplit, characterSplit, lowAllpass;
+
+        for (auto* filter : { &lowSplit, &characterSplit })
+        {
+            filter->prepare (spec);
+            filter->setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
+        }
+
+        lowAllpass.prepare (spec);
+        lowAllpass.setType (juce::dsp::LinkwitzRileyFilterType::allpass);
+
+        xyb::BandSplitter splitter;
+        splitter.prepare (spec);
+
+        for (int block = 0; block < 200; ++block)
+        {
+            const auto lowHz = 60.0f + 180.0f * random.nextFloat();
+
+            lowSplit.setCutoffFrequency (lowHz);
+            characterSplit.setCutoffFrequency (500.0f);
+            lowAllpass.setCutoffFrequency (500.0f);
+            splitter.setCrossovers (lowHz, 500.0f);
+
+            for (int i = 0; i < 256; ++i)
+            {
+                for (int channel = 0; channel < 2; ++channel)
+                {
+                    const auto input = random.nextFloat() * 2.0f - 1.0f;
+
+                    float low = 0.0f, high = 0.0f, mid = 0.0f, character = 0.0f;
+                    lowSplit.processSample (channel, input, low, high);
+                    const auto expectedLow = lowAllpass.processSample (channel, low);
+                    characterSplit.processSample (channel, high, mid, character);
+
+                    const auto bands = splitter.process (channel, input);
+
+                    worstSplit = juce::jmax (worstSplit,
+                                             (double) std::abs (expectedLow - bands.low),
+                                             (double) std::abs (mid - bands.mid));
+                    worstSplit = juce::jmax (worstSplit, (double) std::abs (character - bands.character));
+                }
+            }
+        }
+    }
+
+    report ("worst biquad difference from JUCE (dB)", juce::Decibels::gainToDecibels (worstBiquad, -200.0));
+    report ("worst crossover difference from JUCE (dB)", juce::Decibels::gainToDecibels (worstSplit, -200.0));
+
+    check (worstBiquad < 1.0e-6, "the biquad reproduces JUCE's IIR filter");
+    check (worstSplit < 1.0e-6, "the crossover reproduces JUCE's Linkwitz-Riley filters");
+}
+
 void testHalfbandOversampler()
 {
     section ("halfband oversampler");
@@ -1614,6 +1697,7 @@ int main()
     testStability();
     testDegenerateSetup();
     testHalfbandOversampler();
+    testFilterReplacements();
     testSilenceAndDenormals();
     testDcRejection();
     testDryPathAlignment();

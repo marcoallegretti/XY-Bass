@@ -26,8 +26,8 @@ private:
     void finishFrame() noexcept;
     float refineLag (int lagIndex) const noexcept;
 
-    juce::dsp::IIR::Filter<float> decimationFilter[2];
-    juce::dsp::IIR::Filter<float> highPass;
+    Biquad decimationFilter[2];
+    Biquad highPass;
 
     std::vector<float> history;
     std::vector<float> window;

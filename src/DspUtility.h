@@ -262,6 +262,18 @@ public:
 
     void reset() noexcept { z1 = z2 = 0.0f; }
 
+    void setCoefficients (const juce::dsp::IIR::Coefficients<float>& coefficients) noexcept
+    {
+        jassert (coefficients.getFilterOrder() == 2);
+
+        const auto* raw = coefficients.getRawCoefficients();
+        b0 = raw[0];
+        b1 = raw[1];
+        b2 = raw[2];
+        a1 = raw[3];
+        a2 = raw[4];
+    }
+
     void setBypass() noexcept
     {
         b0 = 1.0f;
