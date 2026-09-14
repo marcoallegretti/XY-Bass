@@ -1,3 +1,7 @@
 * text=auto eol=lf
+
 *.wav binary
 *.png binary
+*.exe binary
+*.zip binary
+*.vst3 binary

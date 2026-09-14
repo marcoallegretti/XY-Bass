@@ -1,120 +1,334 @@
-name: build
+name: Build
 
 on:
   push:
-    branches: [master, main]
+    branches:
+      - master
+    tags:
+      - "v*"
   pull_request:
+    branches:
+      - master
   workflow_dispatch:
+    inputs:
+      full_matrix:
+        description: Also build Windows and macOS without publishing a release
+        type: boolean
+        default: false
+      notary_status_only:
+        description: Only report recent notary submissions and build nothing
+        type: boolean
+        default: false
 
+permissions:
+  contents: read
+
+# Supersede in-flight runs so a quick follow-up push never pays for two builds.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  RELEASE_VERSION: 0.1.0
+  PLUGINVAL_TAG: v1.0.4
+
 jobs:
-  build:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      # Pinned, not -latest: the VS2026 Windows image leaves msvc-dev-cmd without a
-      # usable compiler and juceaide fails to configure.
-      matrix:
-        include:
-          - { name: Windows, os: windows-2022 }
-          - { name: macOS,   os: macos-14 }
-          - { name: Linux,   os: ubuntu-24.04 }
-
+  gate:
+    name: Linux gate
+    if: github.event_name != 'workflow_dispatch' || inputs.notary_status_only != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build xvfb libasound2-dev libjack-jackd2-dev \
-            libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev \
-            libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
-            libglu1-mesa-dev mesa-common-dev
+          sudo apt-get install --yes ccache libasound2-dev libcurl4-openssl-dev libfontconfig1-dev \
+            libfreetype6-dev libgl1-mesa-dev libjack-jackd2-dev libx11-dev libxcomposite-dev \
+            libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev ninja-build \
+            openbox xvfb
 
-      - name: Install Ninja
-        if: runner.os != 'Linux'
-        uses: seanmiddleditch/gha-setup-ninja@v5
-
-      # Without this Ninja finds the MinGW gcc on PATH, which JUCE rejects outright.
-      - name: Use MSVC
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-
-      # CMakeLists pins the JUCE tag, so caching the fetch keeps CI honest and fast.
-      - name: Cache JUCE
-        uses: actions/cache@v4
+      # JUCE dominates compile time and never changes between our commits.
+      - name: Restore compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: build/_deps
-          key: juce-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ hashFiles('CMakeLists.txt') }}-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-${{ hashFiles('CMakeLists.txt') }}-
+            ccache-linux-
+
+      - name: Check version consistency
+        run: grep -qF "set(XYBASS_VERSION \"$RELEASE_VERSION\")" CMakeLists.txt
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        env:
+          CCACHE_MAXSIZE: 500M
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DXYBASS_INSTALL_AFTER_BUILD=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build --parallel
+        env:
+          CCACHE_MAXSIZE: 500M
+        run: cmake --build build --parallel 4 --target XYBass_VST3 XYBassTests
 
-      - name: Test
-        run: ctest --test-dir build --output-on-failure --timeout 900 -LE performance
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure --label-exclude performance
 
-      - name: Validate the VST3
-        shell: bash
-        run: |
-          set -euo pipefail
-          BASE=https://github.com/Tracktion/pluginval/releases/download/v1.0.3
-          case "$RUNNER_OS" in
-            Windows) curl -sSL -o pluginval.zip "$BASE/pluginval_Windows.zip"; BIN=./pluginval.exe ;;
-            macOS)   curl -sSL -o pluginval.zip "$BASE/pluginval_macOS.zip";   BIN=./pluginval.app/Contents/MacOS/pluginval ;;
-            Linux)   curl -sSL -o pluginval.zip "$BASE/pluginval_Linux.zip";   BIN=./pluginval ;;
-          esac
-          # unzip is not on the Windows runner; 7z is on all three.
-          7z x -y -bso0 pluginval.zip
-          chmod +x "$BIN"
-
-          PLUGIN="build/XYBass_artefacts/Release/VST3/XY Bass.vst3"
-          # The runner has no display, and pluginval opens the editor.
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            xvfb-run -a "$BIN" --strictness-level 10 --timeout-ms 600000 --validate "$PLUGIN"
-          else
-            "$BIN" --strictness-level 10 --timeout-ms 600000 --validate "$PLUGIN"
-          fi
-
-      - name: Validate the CLAP
-        shell: bash
+      - name: Validate VST3
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          case "$RUNNER_OS" in
-            Windows) PATTERN='*windows.zip' ;;
-            macOS)   PATTERN='*macos-universal.zip' ;;
-            Linux)   PATTERN='*ubuntu-22.04.zip' ;;
+          gh release download "$PLUGINVAL_TAG" --repo Tracktion/pluginval \
+            --pattern pluginval_Linux.zip --dir "$RUNNER_TEMP"
+          unzip -q "$RUNNER_TEMP/pluginval_Linux.zip" -d "$RUNNER_TEMP/pluginval"
+          binary=$(find "$RUNNER_TEMP/pluginval" -type f -name pluginval | head -n 1)
+          test -n "$binary" || { echo 'pluginval executable was not found' >&2; exit 1; }
+          chmod +x "$binary"
+          xvfb-run -a "$binary" --strictness-level 10 --timeout-ms 120000 \
+            --validate "build/XYBass_artefacts/Release/VST3/XY Bass.vst3"
+
+      - name: Package
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.full_matrix
+        run: |
+          staging="$RUNNER_TEMP/package"
+          rm -rf "$staging"
+          mkdir -p "$staging/VST3"
+          cp -R "build/XYBass_artefacts/Release/VST3/XY Bass.vst3" "$staging/VST3/"
+          archive="$PWD/XY-Bass-$RELEASE_VERSION-linux-x64.zip"
+          (cd "$staging" && cmake -E tar cf "$archive" --format=zip -- VST3)
+          shasum -a 256 "XY-Bass-$RELEASE_VERSION-linux-x64.zip" \
+            | sed 's| .*/| |' > "XY-Bass-$RELEASE_VERSION-linux-x64.zip.sha256"
+
+      - name: Upload
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.full_matrix
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XY-Bass-${{ env.RELEASE_VERSION }}-linux-x64
+          path: |
+            XY-Bass-${{ env.RELEASE_VERSION }}-linux-x64.zip
+            XY-Bass-${{ env.RELEASE_VERSION }}-linux-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows
+    needs: gate
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.full_matrix)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DXYBASS_INSTALL_AFTER_BUILD=OFF
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel 4 --target XYBass_VST3 XYBassTests
+
+      - name: Run tests
+        shell: pwsh
+        run: ctest --test-dir build -C Release --output-on-failure --label-exclude performance
+
+      - name: Validate VST3
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download $env:PLUGINVAL_TAG --repo Tracktion/pluginval --pattern pluginval_Windows.zip --dir $env:RUNNER_TEMP
+          Expand-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'pluginval_Windows.zip') -DestinationPath (Join-Path $env:RUNNER_TEMP 'pluginval') -Force
+          $validator = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'pluginval') -Recurse -File -Filter pluginval.exe | Select-Object -First 1
+          if ($null -eq $validator) { throw 'pluginval executable was not found' }
+          & $validator.FullName --strictness-level 10 --timeout-ms 120000 --validate "build/XYBass_artefacts/Release/VST3/XY Bass.vst3"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Stage the bundle by name: MSVC drops an import library and an export file
+      # beside the VST3, and neither belongs in a download.
+      - name: Package
+        shell: pwsh
+        run: |
+          $release = "build/XYBass_artefacts/Release"
+          $staging = Join-Path $env:RUNNER_TEMP 'package'
+          Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction Ignore
+          New-Item -ItemType Directory -Path "$staging/VST3" | Out-Null
+          Copy-Item -LiteralPath "$release/VST3/XY Bass.vst3" -Destination "$staging/VST3" -Recurse
+          $archive = Join-Path $PWD "XY-Bass-$env:RELEASE_VERSION-windows-x64.zip"
+          Push-Location $staging
+          cmake -E tar cf $archive --format=zip -- VST3
+          $result = $LASTEXITCODE
+          Pop-Location
+          if ($result -ne 0) { exit $result }
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$archive.sha256", "$hash  $([IO.Path]::GetFileName($archive))`n", [Text.UTF8Encoding]::new($false))
+
+      - name: Upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XY-Bass-${{ env.RELEASE_VERSION }}-windows-x64
+          path: |
+            XY-Bass-${{ env.RELEASE_VERSION }}-windows-x64.zip
+            XY-Bass-${{ env.RELEASE_VERSION }}-windows-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: macOS
+    needs: gate
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.full_matrix)
+    runs-on: macos-14
+    timeout-minutes: 75
+    env:
+      HAS_APPLICATION_IDENTITY: ${{ secrets.MACOS_APPLICATION_P12_BASE64 != '' }}
+      HAS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_P12_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Provision signing identities
+        if: env.HAS_APPLICATION_IDENTITY == 'true'
+        env:
+          MACOS_APPLICATION_P12_BASE64: ${{ secrets.MACOS_APPLICATION_P12_BASE64 }}
+          MACOS_APPLICATION_P12_PASSWORD: ${{ secrets.MACOS_APPLICATION_P12_PASSWORD }}
+          MACOS_INSTALLER_P12_BASE64: ${{ secrets.MACOS_INSTALLER_P12_BASE64 }}
+          MACOS_INSTALLER_P12_PASSWORD: ${{ secrets.MACOS_INSTALLER_P12_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: ./Tools/SetupMacSigning.sh
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DXYBASS_INSTALL_AFTER_BUILD=OFF \
+            "-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Build
+        run: cmake --build build --parallel 4 --target XYBass_VST3 XYBass_AU XYBassTests
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure --label-exclude performance
+
+      - name: Validate VST3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$PLUGINVAL_TAG" --repo Tracktion/pluginval \
+            --pattern pluginval_macOS.zip --dir "$RUNNER_TEMP"
+          unzip -q "$RUNNER_TEMP/pluginval_macOS.zip" -d "$RUNNER_TEMP/pluginval"
+          binary=$(find "$RUNNER_TEMP/pluginval" -type f -name pluginval | head -n 1)
+          test -n "$binary" || { echo 'pluginval executable was not found' >&2; exit 1; }
+          chmod +x "$binary"
+          "$binary" --strictness-level 10 --timeout-ms 120000 \
+            --validate "build/XYBass_artefacts/Release/VST3/XY Bass.vst3"
+
+      - name: Validate Audio Unit
+        run: |
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          ditto "build/XYBass_artefacts/Release/AU/XY Bass.component" \
+            "$HOME/Library/Audio/Plug-Ins/Components/XY Bass.component"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 3
+          auval -v aufx XyBs Ttds
+
+      - name: Sign and notarize
+        if: env.HAS_APPLICATION_IDENTITY == 'true'
+        run: ./Tools/SignAndNotarizeMac.sh build/XYBass_artefacts/Release "$SIGNING_IDENTITY" "$NOTARY_PROFILE"
+
+      - name: Build signed installer
+        if: env.HAS_INSTALLER_IDENTITY == 'true'
+        run: |
+          ./Tools/PackageMacInstaller.sh build/XYBass_artefacts/Release \
+            "$INSTALLER_IDENTITY" "$NOTARY_PROFILE" \
+            "$PWD/XY-Bass-$RELEASE_VERSION-macos-universal.pkg"
+          shasum -a 256 "XY-Bass-$RELEASE_VERSION-macos-universal.pkg" \
+            | sed 's| .*/| |' > "XY-Bass-$RELEASE_VERSION-macos-universal.pkg.sha256"
+
+      # ditto rather than zip: it preserves the bundle layout and the notarization ticket.
+      - name: Package
+        run: |
+          staging="$RUNNER_TEMP/XY Bass"
+          rm -rf "$staging"
+          mkdir -p "$staging/VST3" "$staging/AU"
+          ditto "build/XYBass_artefacts/Release/VST3/XY Bass.vst3" "$staging/VST3/XY Bass.vst3"
+          ditto "build/XYBass_artefacts/Release/AU/XY Bass.component" "$staging/AU/XY Bass.component"
+          ditto -c -k --sequesterRsrc --keepParent "$staging" \
+            "$PWD/XY-Bass-$RELEASE_VERSION-macos-universal.zip"
+          shasum -a 256 "XY-Bass-$RELEASE_VERSION-macos-universal.zip" \
+            | sed 's| .*/| |' > "XY-Bass-$RELEASE_VERSION-macos-universal.zip.sha256"
+
+      - name: Upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XY-Bass-${{ env.RELEASE_VERSION }}-macos-universal
+          path: |
+            XY-Bass-${{ env.RELEASE_VERSION }}-macos-universal.zip
+            XY-Bass-${{ env.RELEASE_VERSION }}-macos-universal.zip.sha256
+            XY-Bass-${{ env.RELEASE_VERSION }}-macos-universal.pkg
+            XY-Bass-${{ env.RELEASE_VERSION }}-macos-universal.pkg.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  notary-status:
+    name: Notary service status
+    if: github.event_name == 'workflow_dispatch' && inputs.notary_status_only
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Report recent submissions
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool store-credentials notary-status \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          xcrun notarytool history --keychain-profile notary-status
+
+  publish:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [gate, windows, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Check tag and history
+        run: |
+          test "$GITHUB_REF_NAME" = "v$RELEASE_VERSION"
+          ./Tools/CheckReleaseHistory.sh
+
+      - name: Download artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Verify artifacts
+        working-directory: dist
+        run: |
+          test -f "XY-Bass-$RELEASE_VERSION-macos-universal.pkg" || { echo 'signed macOS installer is missing' >&2; exit 1; }
+          sha256sum --check ./*.sha256
+          sha256sum ./*.zip ./*.pkg > SHA256SUMS.txt
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=()
+          case "$RELEASE_VERSION" in
+            *-rc*|*-beta*|*-alpha*) flags+=(--prerelease) ;;
           esac
-          # The asset names carry a build hash, so match by pattern rather than pin a filename.
-          gh release download 0.4.1 --repo free-audio/clap-validator --pattern "$PATTERN" --clobber -O cv.zip
-          7z x -y -bso0 cv.zip
-          # Windows ships the binary directly; the other two wrap it in a tarball.
-          if [ "$RUNNER_OS" != "Windows" ]; then
-            tar xzf clap-validator-*.tar.gz
-          fi
-          # Each platform's archive nests the binary differently, so locate it.
-          BIN="$(find . -type f \( -name clap-validator -o -name clap-validator.exe \) | head -1)"
-          [ -n "$BIN" ] || { echo "::error::clap-validator binary not found"; exit 1; }
-          chmod +x "$BIN"
-
-          PLUGIN="build/XYBass_artefacts/Release/CLAP/XY Bass.clap"
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            xvfb-run -a "$BIN" validate "$PLUGIN"
-          else
-            "$BIN" validate "$PLUGIN"
-          fi
-
-      # A shared runner cannot hold a stable clock, so the timing suite reports
-      # rather than gates. Its absolute deadlines are only meaningful on real hardware.
-      - name: Timing report
-        continue-on-error: true
-        run: ctest --test-dir build -V --timeout 900 -L performance
+          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.pkg dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "XY Bass $RELEASE_VERSION" "${flags[@]}"
