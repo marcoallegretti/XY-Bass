@@ -28,6 +28,23 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(JUCE clap-juce-extensions)
 
+function(xybass_compile_options target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /utf-8 /arch:AVX)
+    elseif(APPLE)
+        if(CMAKE_OSX_ARCHITECTURES)
+            # Only the Intel slice of a universal build can take AVX.
+            if("x86_64" IN_LIST CMAKE_OSX_ARCHITECTURES)
+                target_compile_options(${target} PRIVATE "SHELL:-Xarch_x86_64 -mavx")
+            endif()
+        elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+            target_compile_options(${target} PRIVATE -mavx)
+        endif()
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        target_compile_options(${target} PRIVATE -mavx)
+    endif()
+endfunction()
+
 set(XYBASS_FORMATS Standalone VST3)
 
 if(APPLE)
@@ -98,9 +115,7 @@ clap_juce_extensions_plugin(TARGET XYBass
     CLAP_FEATURES audio-effect distortion mastering
 )
 
-if(MSVC)
-    target_compile_options(XYBass PRIVATE /utf-8 /arch:AVX)
-endif()
+xybass_compile_options(XYBass)
 
 enable_testing()
 
@@ -129,9 +144,7 @@ target_link_libraries(XYBassTests
         juce::juce_recommended_warning_flags
 )
 
-if(MSVC)
-    target_compile_options(XYBassTests PRIVATE /utf-8 /arch:AVX)
-endif()
+xybass_compile_options(XYBassTests)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(XYBassTests PRIVATE
@@ -165,9 +178,7 @@ target_link_libraries(XYBassAnalysisTests
         juce::juce_recommended_warning_flags
 )
 
-if(MSVC)
-    target_compile_options(XYBassAnalysisTests PRIVATE /utf-8 /arch:AVX)
-endif()
+xybass_compile_options(XYBassAnalysisTests)
 
 add_test(NAME xy-bass-analysis COMMAND XYBassAnalysisTests)
 
@@ -196,9 +207,7 @@ target_link_libraries(XYBassMaterialTests
         juce::juce_recommended_warning_flags
 )
 
-if(MSVC)
-    target_compile_options(XYBassMaterialTests PRIVATE /utf-8 /arch:AVX)
-endif()
+xybass_compile_options(XYBassMaterialTests)
 
 add_test(NAME xy-bass-material COMMAND XYBassMaterialTests)
 
@@ -228,9 +237,7 @@ target_link_libraries(XYBassPerformanceTests
         juce::juce_recommended_warning_flags
 )
 
-if(MSVC)
-    target_compile_options(XYBassPerformanceTests PRIVATE /utf-8 /arch:AVX)
-endif()
+xybass_compile_options(XYBassPerformanceTests)
 
 add_test(NAME xy-bass-performance COMMAND XYBassPerformanceTests)
 set_tests_properties(xy-bass-performance PROPERTIES LABELS performance)
@@ -266,8 +273,6 @@ target_link_libraries(XYBassPluginTests
         juce::juce_recommended_warning_flags
 )
 
-if(MSVC)
-    target_compile_options(XYBassPluginTests PRIVATE /utf-8 /arch:AVX)
-endif()
+xybass_compile_options(XYBassPluginTests)
 
 add_test(NAME xy-bass-plugin COMMAND XYBassPluginTests)

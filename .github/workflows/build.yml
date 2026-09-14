@@ -83,8 +83,6 @@ jobs:
             "$BIN" --strictness-level 10 --timeout-ms 600000 --validate "$PLUGIN"
           fi
 
-      # A shared runner cannot hold a stable clock, so the timing suite reports
-      # rather than gates. Its absolute deadlines are only meaningful on real hardware.
       - name: Validate the CLAP
         shell: bash
         env:
@@ -115,6 +113,8 @@ jobs:
             "$BIN" validate "$PLUGIN"
           fi
 
+      # A shared runner cannot hold a stable clock, so the timing suite reports
+      # rather than gates. Its absolute deadlines are only meaningful on real hardware.
       - name: Timing report
         continue-on-error: true
         run: ctest --test-dir build -V --timeout 900 -L performance
