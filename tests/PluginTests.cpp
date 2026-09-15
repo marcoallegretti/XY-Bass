@@ -130,6 +130,37 @@ void testStateRoundTrip()
                && juce::exactlyEqual (valueOf (switchState, xyb::ids::delta), 0.0f),
            "restoring a state lands switches exactly on their saved values");
 
+    // A state saved by a later version keeps the fields this version knows about.
+    juce::XmlElement future (source.getValueTreeState().state.getType());
+    future.setAttribute ("stateVersion", 2);
+    future.setAttribute ("program", 3);
+    future.setAttribute ("addedLater", "ignored");
+
+    for (const auto& [id, value] : { std::pair<const char*, double> { xyb::ids::positionX, 0.23 }, { xyb::ids::mix, 42.0 },
+                                     { xyb::ids::delta, 1.0 }, { "addedLater", 7.0 } })
+    {
+        auto* child = future.createNewChildElement ("PARAM");
+        child->setAttribute ("id", id);
+        child->setAttribute ("value", value);
+    }
+
+    future.createNewChildElement ("AddedLater")->setAttribute ("value", 1);
+
+    juce::MemoryBlock futureBlock;
+    juce::AudioProcessor::copyXmlToBinary (future, futureBlock);
+
+    XYBassProcessor newer;
+    newer.setStateInformation (futureBlock.getData(), (int) futureBlock.getSize());
+    auto& newerState = newer.getValueTreeState();
+
+    check (std::abs (valueOf (newerState, xyb::ids::positionX) - 0.23f) < 1.0e-4f
+               && std::abs (newerState.getParameter (xyb::ids::mix)->convertFrom0to1 (valueOf (newerState, xyb::ids::mix)) - 42.0f) < 0.01f
+               && juce::exactlyEqual (valueOf (newerState, xyb::ids::delta), 1.0f)
+               && newer.getCurrentProgram() == 3,
+           "a state from a later version restores every field this version knows");
+    check (juce::exactlyEqual (valueOf (newerState, xyb::ids::positionY), 0.5f),
+           "fields missing from a later state keep their defaults");
+
     XYBassProcessor untouched;
     untouched.setStateInformation (block.getData(), 3);
     check (juce::exactlyEqual (untouched.getValueTreeState().getParameter (xyb::ids::positionX)->getValue(), 0.5f),

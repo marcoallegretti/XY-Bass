@@ -276,22 +276,37 @@ void XYBassProcessor::setStateInformation (const void* data, int sizeInBytes)
         return;
 
     auto state = juce::ValueTree::fromXml (*xml);
+    currentProgram = juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("program", 0));
 
     if ((int) state.getProperty ("stateVersion", 1) > 1)
-        return;
-
-    currentProgram = juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("program", 0));
-    parameters.replaceState (state);
-
-    // A switch keeps the raw value a host wrote, and replaceState skips parameters whose
-    // snapped value is unchanged, so an off-grid value would otherwise survive the restore.
-    for (auto* id : { ids::autoGain, ids::delta, ids::bypass })
     {
-        auto* parameter = parameters.getParameter (id);
-        const auto target = parameter->convertTo0to1 (parameter->convertFrom0to1 (parameter->getValue()));
+        // A later version may have added fields this one cannot interpret, so only the parameters
+        // it knows are taken from that state, one at a time.
+        for (auto* parameter : getParameters())
+        {
+            if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter))
+            {
+                const auto saved = state.getChildWithProperty ("id", ranged->getParameterID());
 
-        if (! juce::exactlyEqual (parameter->getValue(), target))
-            parameter->setValueNotifyingHost (target);
+                if (saved.hasProperty ("value"))
+                    ranged->setValueNotifyingHost (ranged->convertTo0to1 ((float) saved.getProperty ("value")));
+            }
+        }
+    }
+    else
+    {
+        parameters.replaceState (state);
+
+        // A switch keeps the raw value a host wrote, and replaceState skips parameters whose
+        // snapped value is unchanged, so an off-grid value would otherwise survive the restore.
+        for (auto* id : { ids::autoGain, ids::delta, ids::bypass })
+        {
+            auto* parameter = parameters.getParameter (id);
+            const auto target = parameter->convertTo0to1 (parameter->convertFrom0to1 (parameter->getValue()));
+
+            if (! juce::exactlyEqual (parameter->getValue(), target))
+                parameter->setValueNotifyingHost (target);
+        }
     }
 
     updateHostDisplay (juce::AudioProcessorListener::ChangeDetails{}.withProgramChanged (true));
