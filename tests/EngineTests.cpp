@@ -1284,6 +1284,59 @@ void testCeilingContinuity()
     check (loudest > 0.9 && loudest <= 1.0, "the ramp reaches the ceiling and stays within full scale");
 }
 
+void testDeltaToggleIsSmooth()
+{
+    section ("delta toggle");
+
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 256;
+    const auto length = (int) sampleRate * 3;
+    const auto toggleAt = blockSize * 280;
+
+    auto worstRatio = 0.0;
+
+    for (const auto startInDelta : { false, true })
+    {
+        xyb::BassEngine engine;
+        engine.prepare (sampleRate, blockSize, 2);
+
+        auto buffer = makeBuffer (2, length);
+        fillSine (buffer, 55.0, sampleRate, 0.4f);
+
+        float* pointers[2] = { nullptr, nullptr };
+
+        for (int start = 0; start < length; start += blockSize)
+        {
+            auto parameters = position (0.5f, 0.5f);
+            parameters.delta = (start < toggleAt) == startInDelta;
+            engine.setParameters (parameters);
+
+            for (int channel = 0; channel < 2; ++channel)
+                pointers[channel] = buffer.getWritePointer (channel) + start;
+
+            Buffer view (pointers, 2, juce::jmin (blockSize, length - start));
+            engine.process (view);
+        }
+
+        auto stepBetween = [&] (int from, int to)
+        {
+            auto result = 0.0;
+
+            for (int i = from; i < to; ++i)
+                result = juce::jmax (result, (double) std::abs (buffer.getSample (0, i) - buffer.getSample (0, i - 1)));
+
+            return result;
+        };
+
+        const auto around = stepBetween (toggleAt, toggleAt + 4800);
+        const auto steady = juce::jmax (stepBetween (toggleAt - 9600, toggleAt), stepBetween (toggleAt + 24000, length));
+        worstRatio = juce::jmax (worstRatio, around / juce::jmax (steady, 1.0e-9));
+    }
+
+    report ("largest step around the toggle against the steady signal's", worstRatio);
+    check (worstRatio < 2.0, "switching delta fades rather than clicks");
+}
+
 void testMonoStereoConsistency()
 {
     section ("mono and stereo consistency");
@@ -2348,6 +2401,7 @@ int runEngineTests()
     testDeltaMonitoring();
     testCleanSettingsAtHighLevel();
     testCeilingContinuity();
+    testDeltaToggleIsSmooth();
     testMonoStereoConsistency();
     testHarmonicStructure();
     testSubReinforcement();

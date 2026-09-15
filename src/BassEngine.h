@@ -114,6 +114,8 @@ private:
     int oversamplingShift = 0;
 
     float smoothedSubsonic = 16.0f;
+    float deltaBlend = 0.0f;
+    float deltaStep = 0.001f;
     float ceilingHold = 0.0f;
     bool periodCeilingActive = false;
     bool coldStart = true;

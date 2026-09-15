@@ -89,6 +89,7 @@ void BassEngine::prepare (double newSampleRate, int maximumBlockSize, int numCha
     inputGain.prepare (sampleRate, 25.0f);
     outputGain.prepare (sampleRate, 25.0f);
     mixAmount.prepare (sampleRate, 30.0f);
+    deltaStep = (float) (1.0 / (0.02 * sampleRate));
     monoAmount.prepare (sampleRate, 180.0f);
     driveControl.prepare (sampleRate, 35.0f);
     asymmetryControl.prepare (sampleRate, 60.0f);
@@ -151,6 +152,7 @@ void BassEngine::reset()
     inputGain.snapTo (juce::Decibels::decibelsToGain (parameters.inputGainDb));
     outputGain.snapTo (juce::Decibels::decibelsToGain (parameters.outputGainDb));
     mixAmount.snapTo (juce::jlimit (0.0f, 1.0f, parameters.mix));
+    deltaBlend = parameters.delta ? 1.0f : 0.0f;
     monoAmount.snapTo (0.4f);
     driveControl.snapTo (0.0f);
     asymmetryControl.snapTo (0.0f);
@@ -472,6 +474,10 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         autoGainSmoother.setTarget (autoGain.getGain());
         const auto autoGainValue = autoGainSmoother.next();
 
+        // A linear fade lands exactly on either mode, so Mix at zero stays exact once it ends.
+        deltaBlend = juce::jlimit (0.0f, 1.0f, deltaBlend + (parameters.delta ? deltaStep : -deltaStep));
+        const auto dryShare = 1.0f - deltaBlend;
+
         float wetMono = 0.0f;
         float dryMono = 0.0f;
         float wet[2] = { 0.0f, 0.0f };
@@ -517,7 +523,7 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
 
             periodCeilingActive = periodCeilingActive || std::abs (levelled) > kCeilingKnee;
 
-            auto result = parameters.delta ? contribution : dry * outputValue + contribution;
+            auto result = dry * outputValue * dryShare + contribution;
 
             if (! (std::abs (result) < 1.0e6f))
             {
