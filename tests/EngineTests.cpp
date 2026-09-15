@@ -1458,6 +1458,86 @@ void testTransientRetention()
     check (extreme > clean - 3.0, "extreme dirt softens but does not destroy the attack");
 }
 
+void testHighFrequencyClicksLeaveTheBassAlone()
+{
+    section ("clicks above the bass");
+
+    constexpr double sampleRate = 48000.0;
+    const auto length = (int) (sampleRate * 3.0);
+
+    // Two millisecond 3 kHz clicks, like a closed hi-hat, over a steady bass note. Their edges are
+    // smoothed so that the clicks themselves put no energy into the bass region.
+    auto fill = [&] (Buffer& buffer, bool clicks)
+    {
+        for (int i = 0; i < length; ++i)
+        {
+            auto value = 0.15 * std::sin (juce::MathConstants<double>::twoPi * 55.0 * i / sampleRate);
+            const auto position = i % 6000;
+
+            if (clicks && position < 96)
+                value += 0.3 * std::sin (juce::MathConstants<double>::twoPi * 3000.0 * position / sampleRate)
+                         * (0.5 - 0.5 * std::cos (juce::MathConstants<double>::twoPi * position / 96.0));
+
+            for (int channel = 0; channel < 2; ++channel)
+                buffer.setSample (channel, i, (float) value);
+        }
+    };
+
+    auto lowPassed = [&] (const Buffer& buffer)
+    {
+        std::array<xyb::TptSvf, 2> filters;
+
+        for (auto& filter : filters)
+        {
+            filter.prepare (sampleRate);
+            filter.setQ (0.7071f);
+            filter.setCutoff (400.0f);
+        }
+
+        std::vector<float> result ((size_t) length);
+
+        for (int i = 0; i < length; ++i)
+            result[(size_t) i] = filters[1].processLowPass (filters[0].processLowPass (buffer.getSample (0, i)));
+
+        return result;
+    };
+
+    auto worst = -1000.0;
+
+    for (const auto y : { 0.4f, 0.6f, 0.8f, 1.0f })
+    {
+        auto withClicks = makeBuffer (2, length);
+        auto plain = makeBuffer (2, length);
+        fill (withClicks, true);
+        fill (plain, false);
+
+        for (auto* buffer : { &withClicks, &plain })
+        {
+            xyb::BassEngine engine;
+            engine.prepare (sampleRate, 256, 2);
+            auto parameters = position (0.3f, y);
+            parameters.autoGain = false;
+            engine.setParameters (parameters);
+            render (engine, *buffer, 256);
+        }
+
+        const auto clicked = lowPassed (withClicks);
+        const auto reference = lowPassed (plain);
+        auto deviation = 0.0;
+
+        for (int i = (int) sampleRate; i < length; ++i)
+            deviation = juce::jmax (deviation, (double) std::abs (clicked[(size_t) i] - reference[(size_t) i]));
+
+        const auto level = rms (reference.data() + (int) sampleRate, length - (int) sampleRate) * std::sqrt (2.0);
+        const auto relative = relativeDb (deviation, level);
+
+        report ("bass deviation caused by clicks at y = " + juce::String (y, 1) + " (dB)", relative);
+        worst = juce::jmax (worst, relative);
+    }
+
+    check (worst < -30.0, "clicks above the bass do not modulate how the bass is driven");
+}
+
 void testSubReinforcement()
 {
     section ("sub reinforcement");
@@ -2157,6 +2237,7 @@ int runEngineTests()
     testMonoStereoConsistency();
     testHarmonicStructure();
     testSubReinforcement();
+    testHighFrequencyClicksLeaveTheBassAlone();
     testTransientRetention();
     testSmallSpeakerTranslation();
     testAliasing();

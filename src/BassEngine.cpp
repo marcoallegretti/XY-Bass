@@ -328,14 +328,12 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         float lowBand[2] = { 0.0f, 0.0f };
         float midBand[2] = { 0.0f, 0.0f };
         float characterBand[2] = { 0.0f, 0.0f };
-        float alignedValue[2] = { 0.0f, 0.0f };
 
         for (int channel = 0; channel < numChannels; ++channel)
         {
             lowBand[channel] = lowBuffer.getReadPointer (channel)[i];
             midBand[channel] = midBuffer.getReadPointer (channel)[i];
             characterBand[channel] = characterBuffer.getReadPointer (channel)[i];
-            alignedValue[channel] = lowBand[channel] + midBand[channel] + characterBand[channel];
         }
 
         const auto monoLow = stereo ? 0.5f * ((1.0f + polarity) * lowBand[0] + (1.0f - polarity) * lowBand[1])
@@ -343,9 +341,6 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         const auto monoInput = stereo ? 0.5f * ((1.0f + polarity) * channelValue[0]
                                                 + (1.0f - polarity) * channelValue[1])
                                       : channelValue[0];
-        const auto monoAligned = stereo ? 0.5f * ((1.0f + polarity) * alignedValue[0]
-                                                  + (1.0f - polarity) * alignedValue[1])
-                                        : alignedValue[0];
 
         analyser.pushMono (monoInput);
         analyser.pushStereo (lowBand[0], stereo ? lowBand[1] : lowBand[0]);
@@ -369,10 +364,10 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
                                               translateEngine.getFundamentalQuadrature());
         const auto harmonicBus = translateEngine.process (fundamentalBand);
 
-        // Transients are read from the input as delayed with the bands, so drive eases off as the
-        // attack reaches the shaper rather than before it.
-        const auto attack = transientFast.process (monoAligned);
-        const auto sustain = transientSlow.process (monoAligned);
+        // Transients are read from the low band, so hi-hats cannot modulate the bass drive, and
+        // the drive eases off as the attack reaches the shaper rather than before it.
+        const auto attack = transientFast.process (monoLow);
+        const auto sustain = transientSlow.process (monoLow);
         const auto transientIndex = juce::jlimit (0.0f, 1.0f,
                                                   (attack / juce::jmax (sustain, 1.0e-5f) - 1.02f) * 1.2f);
         const auto transientScale = 1.0f - transientDepthControl.next() * transientIndex;
