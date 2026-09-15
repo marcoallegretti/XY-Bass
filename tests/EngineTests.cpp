@@ -381,7 +381,7 @@ std::vector<float> envelopeOf (const Buffer& buffer, double sampleRate)
     return result;
 }
 
-double measureAliasing (float x, float y, double sampleRate, double frequency, float mix = 1.0f)
+double measureAliasing (float x, float y, double sampleRate, double frequency, float mix = 1.0f, float amplitude = 0.25f)
 {
     xyb::BassEngine engine;
     engine.prepare (sampleRate, 256, 1);
@@ -394,7 +394,7 @@ double measureAliasing (float x, float y, double sampleRate, double frequency, f
     constexpr int size = 1 << order;
 
     auto buffer = makeBuffer (1, (int) (sampleRate * 2.0) + size);
-    fillSine (buffer, frequency, sampleRate, 0.25f);
+    fillSine (buffer, frequency, sampleRate, amplitude);
     render (engine, buffer, 256);
 
     std::vector<float> data ((size_t) size * 2, 0.0f);
@@ -482,7 +482,7 @@ struct HarmonicProfile
     double highBand = 0.0;
 };
 
-HarmonicProfile measureHarmonics (float x, float y, double sampleRate, double frequency)
+HarmonicProfile measureHarmonics (float x, float y, double sampleRate, double frequency, float amplitude = 0.25f)
 {
     xyb::BassEngine engine;
     engine.prepare (sampleRate, 256, 2);
@@ -490,7 +490,7 @@ HarmonicProfile measureHarmonics (float x, float y, double sampleRate, double fr
 
     const auto totalSamples = (int) (sampleRate * 3.0);
     auto buffer = makeBuffer (2, totalSamples);
-    fillSine (buffer, frequency, sampleRate, 0.25f);
+    fillSine (buffer, frequency, sampleRate, amplitude);
     render (engine, buffer, 256);
 
     const auto analysisStart = (int) (sampleRate * 2.0);
@@ -891,6 +891,60 @@ void testHighSampleRateFilters()
     report ("loudest output from a -10 dBFS tone (dB)", juce::Decibels::gainToDecibels (loudest, -200.0));
     check (finite, "high sample rates stay finite");
     check (loudest < juce::Decibels::decibelsToGain (-3.0), "low cutoffs stay stable up to 768 kHz");
+}
+
+void testLongHighSampleRateRuns()
+{
+    section ("long runs at high sample rates");
+
+    auto worstPeak = 0.0;
+    auto worstPinned = 0.0;
+    auto finite = true;
+    auto dropouts = 0;
+
+    for (const auto sampleRate : { 192000.0, 384000.0, 768000.0 })
+    {
+        for (const auto& [x, y] : { std::pair<float, float> { 0.0f, 1.0f }, { 1.0f, 1.0f }, { 0.5f, 0.5f } })
+        {
+            xyb::BassEngine engine;
+            engine.prepare (sampleRate, 1024, 2);
+            engine.setParameters (position (x, y));
+
+            // Ten seconds of kick over a bass note, long enough for slow filter instability to build.
+            auto buffer = makeBuffer (2, (int) (sampleRate * 10.0));
+            fillKick (buffer, sampleRate, 0.5f);
+
+            for (int channel = 0; channel < 2; ++channel)
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                    buffer.addSample (channel, i, 0.2f * (float) std::sin (juce::MathConstants<double>::twoPi * 55.0 * i / sampleRate));
+
+            render (engine, buffer, 1024);
+
+            finite = finite && isFinite (buffer);
+            worstPeak = juce::jmax (worstPeak, peak (buffer));
+            worstPinned = juce::jmax (worstPinned, pinnedFraction (buffer, 0.95f));
+
+            // The engine clears its output when it resets itself, which shows up as a run of zeros.
+            auto zeros = 0;
+            const auto* data = buffer.getReadPointer (0);
+
+            for (int i = (int) sampleRate; i < buffer.getNumSamples(); ++i)
+            {
+                zeros = juce::exactlyEqual (data[i], 0.0f) ? zeros + 1 : 0;
+
+                if (zeros == 64)
+                    ++dropouts;
+            }
+        }
+    }
+
+    report ("loudest sample over ten second runs", worstPeak);
+    report ("largest share of samples at the ceiling", worstPinned);
+    report ("self resets during the runs", dropouts);
+
+    check (finite, "long runs up to 768 kHz stay finite");
+    check (worstPeak <= 1.0 && worstPinned < 0.01, "long runs up to 768 kHz stay off the ceiling");
+    check (dropouts == 0, "long runs up to 768 kHz never reset themselves");
 }
 
 void testSilenceAndDenormals()
@@ -1423,6 +1477,33 @@ void testHarmonicStructure()
            "centre is gentler than full translate");
     check (relativeDb (centre.second, centre.fundamental) > relativeDb (cleanSub.second, cleanSub.fundamental),
            "centre is not neutral");
+
+    // The same corners six decibels below full scale, where the ceiling and the dynamics start to work.
+    constexpr float loud = 0.5f;
+    const auto loudCleanSub = measureHarmonics (0.0f, 0.0f, 48000.0, 100.0, loud);
+    const auto loudCleanTranslate = measureHarmonics (1.0f, 0.0f, 48000.0, 50.0, loud);
+    const auto loudDirtySub = measureHarmonics (0.0f, 1.0f, 48000.0, 50.0, loud);
+    const auto loudDirtyTranslate = measureHarmonics (1.0f, 1.0f, 48000.0, 50.0, loud);
+
+    describe ("loud clean sub at 100 Hz", loudCleanSub);
+    describe ("loud clean translate", loudCleanTranslate);
+    describe ("loud dirty sub", loudDirtySub);
+    describe ("loud dirty translate", loudDirtyTranslate);
+
+    check (relativeDb (loudCleanSub.second, loudCleanSub.fundamental) < -34.0
+               && relativeDb (loudCleanSub.third, loudCleanSub.fundamental) < -34.0,
+           "clean sub keeps low order harmonics low on a loud tone");
+    check (relativeDb (loudCleanTranslate.second, loudCleanTranslate.fundamental) > -26.0
+               && relativeDb (loudCleanTranslate.third, loudCleanTranslate.fundamental) > -32.0,
+           "clean translate still generates its second and third harmonics on a loud tone");
+    check (relativeDb (loudCleanTranslate.highBand, loudCleanTranslate.fundamental) < -60.0,
+           "clean translate stays free of broadband distortion on a loud tone");
+    check (relativeDb (loudDirtySub.second, loudDirtySub.fundamental)
+               > relativeDb (loudCleanSub.second, loudCleanSub.fundamental) + 10.0,
+           "dirty sub adds low order harmonics on a loud tone");
+    check (relativeDb (loudDirtyTranslate.density, loudDirtyTranslate.fundamental)
+               > relativeDb (loudCleanTranslate.density, loudCleanTranslate.fundamental) + 6.0,
+           "dirty translate increases harmonic density on a loud tone");
 }
 
 struct KickShape
@@ -1717,6 +1798,18 @@ void testAliasing()
     check (baseRateDirty < -48.0, "the lowest supported rate keeps alias products far below the harmonics");
     check (baseRateDirtySub < -48.0, "the lowest supported rate keeps sub alias products down");
     check (topNoteDirty < -46.0, "the top of the tracked range stays clean at the lowest supported rate");
+
+    const auto loudDirtyTranslate = measureAliasing (1.0f, 1.0f, 48000.0, 137.0, 1.0f, 0.7f);
+    const auto loudDirtySub = measureAliasing (0.0f, 1.0f, 48000.0, 137.0, 1.0f, 0.7f);
+    const auto loudHighNote = measureAliasing (1.0f, 1.0f, 44100.0, 287.0, 1.0f, 0.7f);
+
+    report ("-3 dBFS dirty translate stray energy", loudDirtyTranslate);
+    report ("-3 dBFS dirty sub stray energy", loudDirtySub);
+    report ("-3 dBFS high note at 44.1 kHz stray energy", loudHighNote);
+
+    check (loudDirtyTranslate < -52.0, "a loud tone at dirty translate keeps alias products far below the harmonics");
+    check (loudDirtySub < -52.0, "a loud tone at dirty sub keeps alias products far below the harmonics");
+    check (loudHighNote < -46.0, "a loud high note at the lowest supported rate keeps alias products down");
 }
 
 void testSampleRateConsistency()
@@ -1747,9 +1840,11 @@ void testAutomationSmoothing()
 
     const auto sampleRate = 48000.0;
     const auto blockSize = 64;
-    const auto length = (int) (sampleRate * 2.5);
+    const auto length = (int) (sampleRate * 3.0);
 
-    auto measureSlew = [&] (int mode, float fixedX, float fixedY)
+    // mode 0 holds a position, mode 1 sweeps the whole pad four times a second and mode 2 jumps
+    // to a random position every block, the worst a host can automate.
+    auto renderAutomation = [&] (int mode, float fixedX, float fixedY)
     {
         xyb::BassEngine engine;
         engine.prepare (sampleRate, blockSize, 2);
@@ -1758,50 +1853,112 @@ void testAutomationSmoothing()
         auto buffer = makeBuffer (2, length);
         fillSine (buffer, 50.0, sampleRate, 0.25f);
 
+        juce::Random random (0xa070);
         float* pointers[2] = { nullptr, nullptr };
-        int blockIndex = 0;
 
         for (int start = 0; start < length; start += blockSize)
         {
             const auto count = juce::jmin (blockSize, length - start);
+            const auto seconds = (double) start / sampleRate;
+            const auto sweep = (float) std::abs (2.0 * (seconds * 4.0 - std::floor (seconds * 4.0)) - 1.0);
 
-            const auto phase = (float) blockIndex * 0.02f;
-            const auto sweptX = mode == 1 ? 0.5f + 0.5f * std::sin (phase) : fixedX;
-            const auto sweptY = mode == 1 ? 0.5f + 0.5f * std::sin (phase * 1.7f) : fixedY;
-            engine.setParameters (position (sweptX, sweptY));
+            if (mode == 1)
+                engine.setParameters (position (sweep, 1.0f - sweep));
+            else if (mode == 2)
+                engine.setParameters (position (random.nextFloat(), random.nextFloat()));
 
             for (int channel = 0; channel < 2; ++channel)
                 pointers[channel] = buffer.getWritePointer (channel) + start;
 
             Buffer view (pointers, 2, count);
             engine.process (view);
-            ++blockIndex;
         }
 
-        double worst = 0.0;
-        const auto* data = buffer.getReadPointer (0);
+        return buffer;
+    };
 
-        for (int i = (int) sampleRate; i < length; ++i)
-            worst = juce::jmax (worst, (double) std::abs (data[i] - data[i - 1]));
+    // A click stands out against the steps around it, however loud the processed tone is.
+    auto largestJump = [&] (const Buffer& buffer)
+    {
+        constexpr int neighbourhood = 96;
+        const auto* data = buffer.getReadPointer (0);
+        auto worst = 0.0;
+        auto around = 0.0;
+
+        for (int i = (int) sampleRate - neighbourhood; i <= (int) sampleRate + neighbourhood; ++i)
+            around += std::abs ((double) data[i] - data[i - 1]);
+
+        for (int i = (int) sampleRate; i < length - neighbourhood - 1; ++i)
+        {
+            const auto step = std::abs ((double) data[i] - data[i - 1]);
+            worst = juce::jmax (worst, step * (2.0 * neighbourhood + 1.0) / juce::jmax (around, 1.0e-9));
+
+            around += std::abs ((double) data[i + neighbourhood + 1] - data[i + neighbourhood])
+                      - std::abs ((double) data[i - neighbourhood] - data[i - neighbourhood - 1]);
+        }
 
         return worst;
     };
 
-    double staticWorst = 0.0;
-
-    for (int grid = 0; grid <= 4; ++grid)
+    // Zipper noise spreads far above the harmonics a 50 Hz tone gains at these settings.
+    auto energyAbove = [&] (const Buffer& buffer, double frequency)
     {
-        const auto value = (float) grid * 0.25f;
-        staticWorst = juce::jmax (staticWorst, measureSlew (0, value, 0.5f));
-        staticWorst = juce::jmax (staticWorst, measureSlew (0, 0.5f, value));
+        std::array<xyb::Biquad, 2> filters;
+
+        for (size_t stage = 0; stage < filters.size(); ++stage)
+        {
+            filters[stage].prepare (sampleRate);
+            filters[stage].setHighPass ((float) frequency, stage == 0 ? 0.5412f : 1.3066f);
+        }
+
+        double sum = 0.0;
+        const auto* data = buffer.getReadPointer (0);
+
+        for (int i = 0; i < length; ++i)
+        {
+            const auto value = (double) filters[1].process (filters[0].process (data[i]));
+
+            if (i >= (int) sampleRate)
+                sum += value * value;
+        }
+
+        return std::sqrt (sum / (double) (length - (int) sampleRate));
+    };
+
+    double staticJump = 0.0;
+    double diagonalNoise = 0.0;
+    double padNoise = 0.0;
+
+    for (int gridX = 0; gridX <= 4; ++gridX)
+    {
+        for (int gridY = 0; gridY <= 4; ++gridY)
+        {
+            const auto rendered = renderAutomation (0, (float) gridX * 0.25f, (float) gridY * 0.25f);
+            const auto noise = energyAbove (rendered, 6000.0);
+
+            staticJump = juce::jmax (staticJump, largestJump (rendered));
+            padNoise = juce::jmax (padNoise, noise);
+
+            if (gridX + gridY == 4)
+                diagonalNoise = juce::jmax (diagonalNoise, noise);
+        }
     }
 
-    const auto automatedSlew = measureSlew (1, 0.5f, 0.5f);
+    const auto swept = renderAutomation (1, 0.5f, 0.5f);
+    const auto jumping = renderAutomation (2, 0.5f, 0.5f);
 
-    report ("worst static slew", staticWorst);
-    report ("automated slew", automatedSlew);
-    check (automatedSlew < staticWorst * 1.35,
-           "continuous automation introduces no stepping");
+    const auto sweptNoise = relativeDb (energyAbove (swept, 6000.0), diagonalNoise);
+    const auto jumpingNoise = relativeDb (energyAbove (jumping, 6000.0), padNoise);
+
+    report ("largest isolated step at a fixed position", staticJump);
+    report ("largest isolated step under a fast sweep", largestJump (swept));
+    report ("largest isolated step under per block jumps", largestJump (jumping));
+    report ("energy above 6 kHz under a fast sweep, against its path held still (dB)", sweptNoise);
+    report ("energy above 6 kHz under per block jumps, against the pad held still (dB)", jumpingNoise);
+
+    check (largestJump (swept) < staticJump * 1.35 && largestJump (jumping) < staticJump * 1.35,
+           "fast automation introduces no stepping");
+    check (sweptNoise < 3.0 && jumpingNoise < 3.0, "fast automation adds no zipper noise");
 }
 
 void testDeterminism()
@@ -2390,6 +2547,7 @@ int runEngineTests()
     testBandReconstruction();
     testStability();
     testHighSampleRateFilters();
+    testLongHighSampleRateRuns();
     testDegenerateSetup();
     testHalfbandOversampler();
     testFilterReplacements();
