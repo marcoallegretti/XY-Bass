@@ -49,6 +49,23 @@ void* trackedMalloc (size_t size) { countAllocation(); return realMalloc (size);
 void* trackedCalloc (size_t count, size_t size) { countAllocation(); return realCalloc (count, size); }
 void* trackedRealloc (void* pointer, size_t size) { countAllocation(); return realRealloc (pointer, size); }
 
+// With the runtime linked in there is no malloc import to redirect, and the runtime's own
+// allocator reaches the system heap through these instead.
+LPVOID (WINAPI* realHeapAlloc) (HANDLE, DWORD, SIZE_T) = HeapAlloc;
+LPVOID (WINAPI* realHeapReAlloc) (HANDLE, DWORD, LPVOID, SIZE_T) = HeapReAlloc;
+
+LPVOID WINAPI trackedHeapAlloc (HANDLE heap, DWORD flags, SIZE_T size)
+{
+    countAllocation();
+    return realHeapAlloc (heap, flags, size);
+}
+
+LPVOID WINAPI trackedHeapReAlloc (HANDLE heap, DWORD flags, LPVOID pointer, SIZE_T size)
+{
+    countAllocation();
+    return realHeapReAlloc (heap, flags, pointer, size);
+}
+
 void redirectImport (const char* name, void* replacement, void** original)
 {
     auto* base = (BYTE*) GetModuleHandleW (nullptr);
@@ -94,6 +111,8 @@ void installAllocationHooks()
     redirectImport ("malloc", (void*) trackedMalloc, (void**) &realMalloc);
     redirectImport ("calloc", (void*) trackedCalloc, (void**) &realCalloc);
     redirectImport ("realloc", (void*) trackedRealloc, (void**) &realRealloc);
+    redirectImport ("HeapAlloc", (void*) trackedHeapAlloc, (void**) &realHeapAlloc);
+    redirectImport ("HeapReAlloc", (void*) trackedHeapReAlloc, (void**) &realHeapReAlloc);
 }
 
 #elif JUCE_MAC

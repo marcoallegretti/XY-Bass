@@ -8,6 +8,16 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# A host may carry an older Visual C++ runtime than the one this was built against, or none,
+# and a plug-in sharing an older msvcp140.dll can crash on its first mutex.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+# The host process brings its own libstdc++, and the LTS distributions ship older ones.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    string(APPEND CMAKE_SHARED_LINKER_FLAGS " -static-libstdc++ -static-libgcc")
+    string(APPEND CMAKE_MODULE_LINKER_FLAGS " -static-libstdc++ -static-libgcc")
+endif()
+
 if(DEFINED ENV{CI})
     set(XYBASS_INSTALL_DEFAULT OFF)
 else()

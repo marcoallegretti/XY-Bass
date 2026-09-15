@@ -36,7 +36,9 @@ jobs:
   gate:
     name: Linux gate
     if: github.event_name != 'workflow_dispatch' || inputs.notary_status_only != true
-    runs-on: ubuntu-24.04
+    # The oldest supported image: a plug-in links against the glibc it was built on, and anything
+    # newer shuts out the LTS distributions most studios still run.
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -60,7 +62,7 @@ jobs:
             ccache-linux-
 
       - name: Check version consistency
-        run: grep -qF "set(XYBASS_VERSION \"$RELEASE_VERSION\")" CMakeLists.txt
+        run: grep -qF "set(XYBASS_VERSION \"${RELEASE_VERSION%%-*}\")" CMakeLists.txt
 
       - name: Configure
         env:
@@ -77,8 +79,9 @@ jobs:
           CCACHE_MAXSIZE: 500M
         run: cmake --build build --parallel 4 --target XYBass_VST3 XYBassTests
 
+      # The plug-in tests open the editor, so a headless runner needs a display for them.
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure --label-exclude performance
+        run: xvfb-run -a ctest --test-dir build --output-on-failure --label-exclude performance
 
       - name: Validate VST3
         env:
@@ -92,6 +95,25 @@ jobs:
           chmod +x "$binary"
           xvfb-run -a "$binary" --strictness-level 10 --timeout-ms 120000 \
             --validate "build/XYBass_artefacts/Release/VST3/XY Bass.vst3"
+
+      # A plug-in links against the glibc of the machine that built it, so this job runs on the
+      # oldest supported image and fails if anything newer, or a shared libstdc++, slipped in.
+      - name: Check glibc floor
+        run: |
+          status=0
+          while IFS= read -r -d '' binary; do
+            newest=$(objdump -T "$binary" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' | sort -Vu | tail -n 1)
+            echo "$binary needs glibc $newest"
+            if [ "$(printf '%s\n' "$newest" 2.35 | sort -V | tail -n 1)" != 2.35 ]; then
+              echo "glibc $newest is newer than the 2.35 floor" >&2
+              status=1
+            fi
+            if objdump -p "$binary" | grep -q 'NEEDED.*libstdc++'; then
+              echo 'libstdc++ must be linked statically' >&2
+              status=1
+            fi
+          done < <(find build/XYBass_artefacts/Release -name '*.so' -print0)
+          exit $status
 
       - name: Package
         if: startsWith(github.ref, 'refs/tags/v') || inputs.full_matrix
@@ -150,6 +172,22 @@ jobs:
           if ($null -eq $validator) { throw 'pluginval executable was not found' }
           & $validator.FullName --strictness-level 10 --timeout-ms 120000 --validate "build/XYBass_artefacts/Release/VST3/XY Bass.vst3" | Out-Host
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # The dynamic Visual C++ runtime is missing on some machines, and an older copy already loaded
+      # by the host crashes a plug-in built with this toolset on its first mutex.
+      - name: Check runtime linkage
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe | Where-Object FullName -match 'Hostx64\\x64' | Select-Object -First 1
+          if ($null -eq $dumpbin) { throw 'dumpbin was not found' }
+          $binaries = Get-ChildItem "build/XYBass_artefacts/Release" -Recurse -File | Where-Object { ($_.Extension -eq '.vst3' -and $_.FullName -match 'x86_64-win') -or ($_.Extension -eq '.dll' -and $_.FullName -match '\.lv2') }
+          if (-not $binaries) { throw 'no plug-in binaries were found' }
+          foreach ($binary in $binaries) {
+            $imports = & $dumpbin.FullName /dependents $binary.FullName | Out-String
+            Write-Host $imports
+            if ($imports -match '(?i)(vcruntime|msvcp)\d+') { throw "$($binary.Name) depends on the dynamic C++ runtime" }
+          }
 
       # Stage the bundle by name: MSVC drops an import library and an export file
       # beside the VST3, and neither belongs in a download.
