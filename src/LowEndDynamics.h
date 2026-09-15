@@ -16,6 +16,7 @@ public:
         reference.prepare (sampleRate, 1400.0f);
         amountSmoother.prepare (sampleRate, 90.0f);
 
+        primingSamples = juce::roundToInt (0.1 * sampleRate);
         attackCoeff = timeToCoefficient (20.0f, (float) sampleRate);
         releaseCoeff = timeToCoefficient (110.0f, (float) sampleRate);
         fastReleaseCoeff = timeToCoefficient (45.0f, (float) sampleRate);
@@ -29,6 +30,7 @@ public:
         reference.snapTo (0.0f);
         amountSmoother.snapTo (0.0f);
         reductionDb = 0.0f;
+        primed = 0;
     }
 
     void setControls (float amount, float percussive) noexcept
@@ -42,11 +44,19 @@ public:
         const auto amount = amountSmoother.next();
         const auto level = detector.process (sidechain);
 
+        // The average takes over a second to build up, so from a reset it starts at the first
+        // signal's own level instead of compressing that signal as if it rose out of silence.
+        if (primed < primingSamples && level > kLevelFloor)
+        {
+            reference.snapTo (juce::jmax (reference.getCurrent(), level));
+            ++primed;
+        }
+
         reference.setTarget (level);
         const auto average = reference.next();
 
         constexpr float knee = 9.0f;
-        const auto baseline = juce::jmax (average, 2.0e-4f);
+        const auto baseline = juce::jmax (average, kLevelFloor);
         float targetReduction = 0.0f;
 
         if (level > baseline * kneeEntry)
@@ -87,8 +97,11 @@ private:
     float fastReleaseCoeff = 0.0f;
     float reductionDb = 0.0f;
     float percussiveBlend = 0.0f;
+    int primingSamples = 1;
+    int primed = 0;
 
     static constexpr float kneeEntry = 0.8913f;
+    static constexpr float kLevelFloor = 2.0e-4f;
     static constexpr float decibelsToNepers = 0.11512925f;
 };
 

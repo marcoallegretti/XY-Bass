@@ -164,6 +164,7 @@ void BassEngine::reset()
     coreWeight.snapTo (0.0f);
 
     smoothedSubsonic = 16.0f;
+    coldStart = true;
     ceilingHold = 0.0f;
     periodCeilingActive = false;
     periodPosition = 0;
@@ -189,6 +190,13 @@ void BassEngine::updateControls (int numSamples)
     transientDepthControl.setTarget (targets.transientDepth);
     spreadControl.setTarget (targets.harmonicSpread);
     coreWeight.setTarget (juce::jlimit (0.0f, 1.0f, -features.correlation));
+
+    // After a reset the controls start at their first targets rather than gliding in from
+    // arbitrary resting values, which an offline render would hear at its start.
+    if (std::exchange (coldStart, false))
+        for (auto* control : { &bassCrossoverControl, &subsonicControl, &monoAmount, &driveControl, &asymmetryControl,
+                               &clippingControl, &protectionControl, &transientDepthControl, &spreadControl, &coreWeight })
+            control->snapTo (control->getTarget());
 
     splitter.setCrossover (bassCrossoverControl.advance (numSamples));
 

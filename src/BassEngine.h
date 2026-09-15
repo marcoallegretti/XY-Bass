@@ -116,6 +116,7 @@ private:
     float smoothedSubsonic = 16.0f;
     float ceilingHold = 0.0f;
     bool periodCeilingActive = false;
+    bool coldStart = true;
     double currentSampleRate = 48000.0;
 };
 

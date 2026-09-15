@@ -2098,6 +2098,36 @@ void testStartupHasNoLevelBurst()
     check (highest - lowest < 1.0, "the settled level does not depend on where the first note lands");
 }
 
+void testColdStartLevel()
+{
+    section ("level from a cold start");
+
+    auto worstShortfall = 0.0;
+
+    for (const auto& [corner, frequency] : { std::pair<Corner, double> { { 0.0f, 0.3f, "sub" }, 45.0 },
+                                             { { 0.0f, 0.0f, "clean sub" }, 60.0 },
+                                             { { 0.5f, 0.5f, "centre" }, 55.0 } })
+    {
+        xyb::BassEngine engine;
+        engine.setParameters (parametersFor (corner));
+        engine.prepare (48000.0, 256, 2);
+
+        // An offline render starts on the note, so its first moments are heard exactly as rendered.
+        auto buffer = makeBuffer (2, 48000 * 4);
+        fillSine (buffer, frequency, 48000.0, 0.2f);
+        render (engine, buffer, 256);
+
+        const auto early = peakBetween (buffer, 9600, 19200);
+        const auto settled = peakBetween (buffer, 144000, 192000);
+        const auto shortfall = relativeDb (settled, early);
+
+        report (juce::String ("level from 200 to 400 ms below the settled level at ") + corner.name + " (dB)", shortfall);
+        worstShortfall = juce::jmax (worstShortfall, shortfall);
+    }
+
+    check (worstShortfall < 1.5, "a fresh render reaches its settled level within a few hundred milliseconds");
+}
+
 void testImpulseDecay()
 {
     section ("impulse decay");
@@ -2275,6 +2305,7 @@ int runEngineTests()
     testSilenceIsSilent();
     testBlockScheduleIndependence();
     testStartupHasNoLevelBurst();
+    testColdStartLevel();
     testImpulseDecay();
     testRealtimeSafety();
 
