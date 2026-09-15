@@ -99,6 +99,22 @@ void XYBassProcessor::releaseResources()
     engine.reset();
 }
 
+void XYBassProcessor::reset()
+{
+    // Hosts may call this from outside the audio callback, so the audio thread performs it.
+    resetPending.store (true);
+}
+
+void XYBassProcessor::applyPendingReset()
+{
+    if (! resetPending.exchange (false))
+        return;
+
+    engine.reset();
+    bypassBuffer.clear();
+    bypassRamp.setCurrentAndTargetValue (bypassParameter->get() ? 1.0f : 0.0f);
+}
+
 bool XYBassProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     const auto& output = layouts.getMainOutputChannelSet();
@@ -134,6 +150,7 @@ void XYBassProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
         buffer.clear (channel, 0, numSamples);
 
     pullParameters();
+    applyPendingReset();
 
     const auto chunkSize = bypassBuffer.getNumSamples();
 
@@ -178,6 +195,7 @@ void XYBassProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
 void XYBassProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
+    applyPendingReset();
     engine.processBypassed (buffer, buffer.getNumSamples());
 }
 

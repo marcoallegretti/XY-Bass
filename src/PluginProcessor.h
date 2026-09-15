@@ -12,6 +12,7 @@ public:
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
+    void reset() override;
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     using juce::AudioProcessor::processBlock;
     using juce::AudioProcessor::processBlockBypassed;
@@ -44,6 +45,7 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void pullParameters();
+    void applyPendingReset();
 
     juce::AudioProcessorValueTreeState parameters;
     xyb::BassEngine engine;
@@ -59,6 +61,7 @@ private:
 
     juce::AudioBuffer<float> bypassBuffer;
     juce::SmoothedValue<float> bypassRamp;
+    std::atomic<bool> resetPending { false };
     int currentProgram = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (XYBassProcessor)

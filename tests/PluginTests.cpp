@@ -376,6 +376,45 @@ void testVariableBlockSizes()
     checkBypassAlignment (oversized, "oversized blocks");
 }
 
+void testHostReset()
+{
+    section ("host reset");
+
+    const auto sampleRate = 48000.0;
+    constexpr int blockSize = 256;
+    auto loudest = 0.0;
+
+    for (const auto bypassed : { false, true })
+    {
+        XYBassProcessor processor;
+        processor.setPlayConfigDetails (2, 2, sampleRate, blockSize);
+        processor.getValueTreeState().getParameter (xyb::ids::bypass)->setValueNotifyingHost (bypassed ? 1.0f : 0.0f);
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> music (2, (int) sampleRate);
+
+        for (int channel = 0; channel < 2; ++channel)
+            for (int i = 0; i < music.getNumSamples(); ++i)
+                music.setSample (channel, i, 0.4f * (float) std::sin (juce::MathConstants<double>::twoPi * 55.0 * i / sampleRate)
+                                                 * (i % 12000 < 6000 ? 1.0f : 0.2f));
+
+        renderSchedule (processor, music, { blockSize });
+
+        // Stopping and relocating makes the host reset the plug-in before playing on from silence.
+        processor.reset();
+
+        juce::AudioBuffer<float> silence (2, (int) sampleRate);
+        silence.clear();
+        renderSchedule (processor, silence, { blockSize });
+
+        loudest = juce::jmax (loudest, (double) silence.getMagnitude (0, silence.getNumSamples()));
+        processor.releaseResources();
+    }
+
+    report ("loudest sample after a reset (dB)", juce::Decibels::gainToDecibels (loudest, -200.0));
+    check (juce::exactlyEqual (loudest, 0.0), "a host reset leaves nothing of the previous audio");
+}
+
 void testEditorLifecycle()
 {
     section ("editor lifecycle");
@@ -508,6 +547,7 @@ int runPluginTests()
     testProcessingContract();
     testVariableBlockSizes();
     testPrepareUsesCurrentGains();
+    testHostReset();
     testFactoryPresets();
     testEditorLifecycle();
 
