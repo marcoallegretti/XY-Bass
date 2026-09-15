@@ -1216,6 +1216,73 @@ void testCleanSettingsAtHighLevel()
     check (worstCollapse < -40.0, "a large difference from dry is not distorted on its way to the output");
 }
 
+void testCeilingContinuity()
+{
+    section ("output ceiling continuity");
+
+    constexpr double sampleRate = 48000.0;
+    constexpr int rampSamples = 48000;
+    constexpr float extent = 1.2f;
+    constexpr float quietDb = -12.0f;
+
+    auto renderRamp = [] (float outputGainDb)
+    {
+        xyb::BassEngine engine;
+        engine.prepare (sampleRate, 256, 2);
+
+        auto parameters = position (0.5f, 0.0f);
+        parameters.outputGainDb = outputGainDb;
+        engine.setParameters (parameters);
+
+        // A slow triangle through the ceiling on both sides.
+        auto buffer = makeBuffer (2, rampSamples * 5);
+        const auto increment = 2.0f * extent / (float) rampSamples;
+
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            const auto phase = (i + rampSamples / 2) % (2 * rampSamples);
+            const auto value = phase < rampSamples ? -extent + increment * (float) phase
+                                                   : extent - increment * (float) (phase - rampSamples);
+
+            for (int channel = 0; channel < 2; ++channel)
+                buffer.setSample (channel, i, value);
+        }
+
+        render (engine, buffer, 256);
+        return buffer;
+    };
+
+    // Output gain comes after all processing, so the quiet render scaled back up is exactly the
+    // signal the ceiling receives in the loud one, without ever reaching the ceiling itself.
+    const auto limited = renderRamp (0.0f);
+    const auto quiet = renderRamp (quietDb);
+    const auto restore = 1.0 / juce::Decibels::decibelsToGain ((double) quietDb);
+
+    auto steepest = 0.0;
+    auto reversals = 0;
+    auto loudest = 0.0;
+
+    for (int i = rampSamples; i < limited.getNumSamples(); ++i)
+    {
+        const auto signalStep = ((double) quiet.getSample (0, i) - quiet.getSample (0, i - 1)) * restore;
+        const auto limitedStep = (double) limited.getSample (0, i) - limited.getSample (0, i - 1);
+
+        steepest = juce::jmax (steepest, std::abs (limitedStep) - std::abs (signalStep));
+        loudest = juce::jmax (loudest, (double) std::abs (limited.getSample (0, i)));
+
+        if (std::abs (signalStep) > 1.0e-6 && limitedStep * signalStep < 0.0)
+            ++reversals;
+    }
+
+    report ("largest step beyond the limited signal's own step", steepest);
+    report ("steps against the limited signal", reversals);
+    report ("loudest output sample", loudest);
+
+    check (steepest < 1.0e-6, "the ceiling never steps further than the signal it limits");
+    check (reversals == 0, "the ceiling moves with the signal it limits");
+    check (loudest > 0.9 && loudest <= 1.0, "the ramp reaches the ceiling and stays within full scale");
+}
+
 void testMonoStereoConsistency()
 {
     section ("mono and stereo consistency");
@@ -2086,6 +2153,7 @@ int runEngineTests()
     testPartialMix();
     testDeltaMonitoring();
     testCleanSettingsAtHighLevel();
+    testCeilingContinuity();
     testMonoStereoConsistency();
     testHarmonicStructure();
     testSubReinforcement();

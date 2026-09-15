@@ -5,6 +5,7 @@ namespace xyb
 
 static constexpr float kNormalisationReference = 0.2f;
 static constexpr float kNormalisationExponent = 0.7f;
+static constexpr float kCeilingKnee = 0.9f;
 
 void BassEngine::prepare (double newSampleRate, int maximumBlockSize, int numChannels)
 {
@@ -493,16 +494,15 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
             // adds or removes. Blocking its dc rather than the output's leaves Mix at zero untouched.
             const auto difference = outputDcBlocker[(size_t) channel].process (processed - dry);
 
-            const auto contribution = difference * mixValue;
+            // The ceiling bends the processed signal before Mix blends it with dry: it has no step,
+            // Mix at zero never meets it, and a full scale input cannot blend past full scale.
+            const auto levelled = (dry + difference) * outputValue;
+            const auto limited = softClip (levelled, kCeilingKnee);
+            const auto contribution = (limited - dry * outputValue) * mixValue;
 
-            auto result = parameters.delta ? contribution : dry + contribution;
-            result *= outputValue;
+            periodCeilingActive = periodCeilingActive || std::abs (levelled) > kCeilingKnee;
 
-            if (std::abs (result) > 1.0f)
-            {
-                result = softClip (result, 0.9f);
-                periodCeilingActive = true;
-            }
+            auto result = parameters.delta ? contribution : dry * outputValue + contribution;
 
             if (! (std::abs (result) < 1.0e6f))
             {
