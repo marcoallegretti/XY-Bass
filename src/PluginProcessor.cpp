@@ -258,11 +258,19 @@ void XYBassProcessor::changeProgramName (int, const juce::String&)
 {
 }
 
+void XYBassProcessor::setEditorSize (int width, int height) noexcept
+{
+    editorWidth.store (width);
+    editorHeight.store (height);
+}
+
 void XYBassProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
     state.setProperty ("stateVersion", 1, nullptr);
     state.setProperty ("program", currentProgram, nullptr);
+    state.setProperty ("editorWidth", editorWidth.load(), nullptr);
+    state.setProperty ("editorHeight", editorHeight.load(), nullptr);
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -277,6 +285,10 @@ void XYBassProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     auto state = juce::ValueTree::fromXml (*xml);
     currentProgram = juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("program", 0));
+    setEditorSize ((int) state.getProperty ("editorWidth", editorWidth.load()),
+                   (int) state.getProperty ("editorHeight", editorHeight.load()));
+    state.removeProperty ("editorWidth", nullptr);
+    state.removeProperty ("editorHeight", nullptr);
 
     if ((int) state.getProperty ("stateVersion", 1) > 1)
     {

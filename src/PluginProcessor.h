@@ -42,6 +42,9 @@ public:
     juce::AudioProcessorValueTreeState& getValueTreeState() noexcept { return parameters; }
     const xyb::EngineMeters& getMeters() const noexcept { return engine.getMeters(); }
 
+    juce::Point<int> getEditorSize() const noexcept { return { editorWidth.load(), editorHeight.load() }; }
+    void setEditorSize (int width, int height) noexcept;
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void pullParameters();
@@ -62,6 +65,10 @@ private:
     juce::AudioBuffer<float> bypassBuffer;
     juce::SmoothedValue<float> bypassRamp;
     std::atomic<bool> resetPending { false };
+
+    // Kept outside the parameter tree, which the host copies on its own thread when saving.
+    std::atomic<int> editorWidth { 600 };
+    std::atomic<int> editorHeight { 640 };
     int currentProgram = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (XYBassProcessor)

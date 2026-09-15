@@ -529,9 +529,25 @@ void testEditorLifecycle()
     processor.editorBeingDeleted (editor);
     delete editor;
 
-    auto* second = processor.createEditorAndMakeActive();
+    // The parameter tree is copied on the host's thread when saving, so the editor must not
+    // write into it from the message thread.
+    check (! processor.getValueTreeState().state.hasProperty ("editorWidth")
+               && ! processor.getValueTreeState().state.hasProperty ("editorHeight"),
+           "resizing the editor leaves the parameter tree alone");
+
+    juce::MemoryBlock saved;
+    processor.getStateInformation (saved);
+
+    XYBassProcessor restored;
+    restored.setStateInformation (saved.getData(), (int) saved.getSize());
+
+    auto* second = restored.createEditorAndMakeActive();
     check (second != nullptr, "the editor can be reopened");
-    processor.editorBeingDeleted (second);
+
+    if (second != nullptr)
+        check (second->getWidth() == 900 && second->getHeight() == 960, "the editor size survives a state round trip");
+
+    restored.editorBeingDeleted (second);
     delete second;
 
     processor.releaseResources();

@@ -60,12 +60,13 @@ XYBassEditor::XYBassEditor (XYBassProcessor& owner)
     deltaAttachment = std::make_unique<ButtonAttachment> (state, xyb::ids::delta, deltaButton);
     bypassAttachment = std::make_unique<ButtonAttachment> (state, xyb::ids::bypass, bypassButton);
 
+    // Applying the limits resizes the editor, which would overwrite the saved size.
+    const auto size = bassProcessor.getEditorSize();
+
     setResizable (true, true);
     getConstrainer()->setFixedAspectRatio (600.0 / 640.0);
     setResizeLimits (520, 554, 1080, 1152);
-
-    const auto& stored = state.state;
-    setSize ((int) stored.getProperty ("editorWidth", 600), (int) stored.getProperty ("editorHeight", 640));
+    setSize (size.x, size.y);
 
     startTimerHz (24);
 }
@@ -204,14 +205,7 @@ void XYBassEditor::paint (juce::Graphics& g)
 
 void XYBassEditor::resized()
 {
-    auto stored = bassProcessor.getValueTreeState().state;
-
-    if ((int) stored.getProperty ("editorWidth", 0) != getWidth()
-        || (int) stored.getProperty ("editorHeight", 0) != getHeight())
-    {
-        stored.setProperty ("editorWidth", getWidth(), nullptr);
-        stored.setProperty ("editorHeight", getHeight(), nullptr);
-    }
+    bassProcessor.setEditorSize (getWidth(), getHeight());
 
     auto bounds = getLocalBounds();
     const auto header = bounds.removeFromTop (46);
