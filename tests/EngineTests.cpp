@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 
 #if JUCE_WINDOWS
  #define NOMINMAX
@@ -2128,6 +2129,64 @@ void testColdStartLevel()
     check (worstShortfall < 1.5, "a fresh render reaches its settled level within a few hundred milliseconds");
 }
 
+void testRecoveryFromAbsurdInput()
+{
+    section ("recovery from absurd input");
+
+    constexpr double sampleRate = 48000.0;
+    const auto spikeAt = (int) sampleRate;
+    const auto length = (int) sampleRate * 3;
+
+    auto source = makeBuffer (2, length);
+    fillSine (source, 55.0, sampleRate, 0.2f);
+
+    Buffer reference (source);
+
+    {
+        xyb::BassEngine engine;
+        engine.prepare (sampleRate, 256, 2);
+        engine.setParameters (position (0.5f, 0.5f));
+        render (engine, reference, 256);
+    }
+
+    const auto referencePeak = peakBetween (reference, spikeAt, length);
+    auto worstOvershoot = -1000.0;
+    auto worstShortfall = -1000.0;
+    auto finite = true;
+
+    for (const auto spike : { 1.0e3f, 1.0e8f, 1.0e20f, std::numeric_limits<float>::infinity(),
+                              std::numeric_limits<float>::quiet_NaN() })
+    {
+        Buffer buffer (source);
+
+        for (int channel = 0; channel < 2; ++channel)
+            buffer.setSample (channel, spikeAt, spike);
+
+        xyb::BassEngine engine;
+        engine.prepare (sampleRate, 256, 2);
+        engine.setParameters (position (0.5f, 0.5f));
+        render (engine, buffer, 256);
+
+        finite = finite && isFinite (buffer);
+
+        // Every 100 ms window from 100 ms after the sample onwards must be back near the level of
+        // a render that never saw it.
+        for (int start = spikeAt + (int) (0.1 * sampleRate); start + 4800 <= length; start += 4800)
+        {
+            const auto level = relativeDb (peakBetween (buffer, start, start + 4800), referencePeak);
+            worstOvershoot = juce::jmax (worstOvershoot, level);
+            worstShortfall = juce::jmax (worstShortfall, -level);
+        }
+    }
+
+    report ("loudest window after an absurd sample, against clean playback (dB)", worstOvershoot);
+    report ("quietest window after an absurd sample, against clean playback (dB)", -worstShortfall);
+
+    check (finite, "absurd input never reaches the output as a non-finite value");
+    check (worstOvershoot < 1.5, "the output recovers from an absurd sample within 100 ms");
+    check (worstShortfall < 6.0, "the output resumes playing after an absurd sample");
+}
+
 void testImpulseDecay()
 {
     section ("impulse decay");
@@ -2306,6 +2365,7 @@ int runEngineTests()
     testBlockScheduleIndependence();
     testStartupHasNoLevelBurst();
     testColdStartLevel();
+    testRecoveryFromAbsurdInput();
     testImpulseDecay();
     testRealtimeSafety();
 

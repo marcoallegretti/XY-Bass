@@ -6,6 +6,7 @@ namespace xyb
 static constexpr float kNormalisationReference = 0.2f;
 static constexpr float kNormalisationExponent = 0.7f;
 static constexpr float kCeilingKnee = 0.9f;
+static constexpr float kAbsurdLevel = 1000.0f;
 
 void BassEngine::prepare (double newSampleRate, int maximumBlockSize, int numChannels)
 {
@@ -307,6 +308,8 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
     const auto channelScale = 1.0f / (float) numChannels;
     const auto stereo = numChannels > 1;
 
+    auto absurd = false;
+
     for (int i = 0; i < numSamples; ++i)
     {
         const auto gain = inputGain.next();
@@ -316,7 +319,16 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
             auto* data = buffer.getWritePointer (channel);
             data[i] *= gain;
             dryBuffer.getWritePointer (channel)[i] = data[i];
+            absurd = absurd || ! (std::abs (data[i]) < kAbsurdLevel);
         }
+    }
+
+    // A sample 60 dB over full scale, or not a number at all, would charge every envelope and
+    // filter for seconds, so the engine starts again rather than processing it.
+    if (absurd)
+    {
+        buffer.clear();
+        return false;
     }
 
     for (int channel = 0; channel < numChannels; ++channel)
