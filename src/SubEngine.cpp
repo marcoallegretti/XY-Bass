@@ -5,12 +5,16 @@ namespace xyb
 
 namespace
 {
-constexpr float kLockGain = 0.19f;
+// The oscillator runs at the tracked pitch and is only pulled into phase with the fundamental
+// over a few hertz, so partials leaking through the fundamental band average out of the loop.
+constexpr float kLockBandwidthHz = 3.0f;
+constexpr float kLockStrength = 0.12f;
 }
 
 void SubEngine::prepare (double newSampleRate)
 {
     sampleRate = (float) newSampleRate;
+    lockGain = juce::MathConstants<float>::twoPi * kLockBandwidthHz / sampleRate;
 
     reinforcementBand.prepare (newSampleRate);
     reinforcementBand.setQ (0.9f);
@@ -116,11 +120,16 @@ float SubEngine::process (float monoLow, float fundamentalBand, float fundamenta
 
         const auto oscillator = reconstructionOscillator.sine();
         const auto inverse = 1.0f / juce::jmax (fundamentalMagnitude, 1.0e-6f);
-        const auto lock = juce::jlimit (0.0f, 1.0f, fundamentalMagnitude * 260.0f);
+
+        // Lock only where the fundamental band holds a real share of the low end, not just the
+        // skirts of the harmonics above it.
+        const auto strength = fundamentalMagnitude / juce::jmax (lowLevel, 1.0e-5f);
+        const auto lock = juce::jlimit (0.0f, 1.0f, fundamentalMagnitude * 260.0f)
+                          * juce::jlimit (0.0f, 1.0f, (strength - kLockStrength) * 12.5f);
         const auto error = fundamentalBand * inverse * reconstructionOscillator.cosine()
                            - fundamentalQuadrature * inverse * oscillator;
 
-        reconstructionOscillator.nudge (kLockGain * lock * error);
+        reconstructionOscillator.nudge (lockGain * lock * error);
 
         synthesised += oscillator * lowLevel * reconstructionAmount * 1.5f * compressiveGain;
     }

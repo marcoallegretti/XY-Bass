@@ -36,7 +36,7 @@ private:
     QuadratureOscillator reconstructionOscillator;
     QuadratureOscillator subharmonicOscillator;
     float sampleRate = 44100.0f;
-
+    float lockGain = 0.0f;
 
     float compressiveGain = 1.0f;
     float compressiveIncrement = 0.0f;

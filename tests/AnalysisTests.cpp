@@ -324,8 +324,83 @@ void testReconstructionEngagement()
     const auto before = magnitudeAt (thin.getReadPointer (0) + start, span, 55.0, sampleRate);
     const auto after = magnitudeAt (processed.getReadPointer (0) + start, span, 55.0, sampleRate);
 
-    report ("reconstructed fundamental gain", relativeDb (after, juce::jmax (before, 1.0e-6)));
-    check (after > before * 4.0, "reconstruction actually restores energy at the missing fundamental");
+    const auto secondHarmonic = magnitudeAt (processed.getReadPointer (0) + start, span, 110.0, sampleRate);
+
+    report ("source fundamental (dB)", juce::Decibels::gainToDecibels (before, -200.0));
+    report ("reconstructed fundamental against the second harmonic (dB)", relativeDb (after, secondHarmonic));
+    check (after > secondHarmonic * juce::Decibels::decibelsToGain (-12.0),
+           "reconstruction restores a fundamental within 12 dB of the second harmonic");
+}
+
+void testReconstructionKeepsTheHarmonics()
+{
+    section ("reconstruction against the harmonics");
+
+    // The sub engine alone, so the same source can be heard with reconstruction fully on and off.
+    auto renderSub = [] (double sampleRate, double fundamental, float reconstruction)
+    {
+        constexpr int period = 256;
+        const auto length = (int) (sampleRate * 4.0);
+
+        xyb::SubEngine sub;
+        xyb::TranslateEngine translate;
+        sub.prepare (sampleRate);
+        translate.prepare (sampleRate);
+
+        std::vector<float> output ((size_t) length);
+
+        for (int i = 0; i < length; ++i)
+        {
+            if (i % period == 0)
+            {
+                sub.setControls (0.0f, 55.0f, reconstruction, 0.0f, (float) fundamental, 1.0f);
+                sub.updateBlock (period);
+                translate.setControls (0.0f, 0.3f, 0.3f, (float) fundamental, 1.0f, 1.0f);
+                translate.updateBlock (period);
+            }
+
+            auto low = 0.0;
+
+            for (int partial = 2; partial <= 5; ++partial)
+                low += 0.3 / partial * std::sin (juce::MathConstants<double>::twoPi * fundamental * partial * i / sampleRate);
+
+            const auto band = translate.extractFundamental ((float) low);
+            output[(size_t) i] = (float) low + sub.process ((float) low, band, translate.getFundamentalMagnitude(),
+                                                            translate.getFundamentalQuadrature());
+            translate.process (band);
+        }
+
+        return output;
+    };
+
+    auto weakestFundamental = 1000.0;
+    auto largestLoss = 0.0;
+
+    for (const auto sampleRate : { 48000.0, 96000.0 })
+    {
+        for (const auto fundamental : { 55.0, 73.4 })
+        {
+            const auto off = renderSub (sampleRate, fundamental, 0.0f);
+            const auto on = renderSub (sampleRate, fundamental, 1.0f);
+            const auto start = (int) off.size() / 2;
+            const auto span = (int) off.size() - start;
+
+            const auto second = magnitudeAt (off.data() + start, span, fundamental * 2.0, sampleRate);
+            const auto restored = magnitudeAt (on.data() + start, span, fundamental, sampleRate);
+            const auto loss = relativeDb (second, magnitudeAt (on.data() + start, span, fundamental * 2.0, sampleRate));
+
+            report (juce::String (fundamental, 1) + " Hz at " + juce::String (sampleRate, 0)
+                        + " Hz, restored fundamental against the second harmonic (dB)", relativeDb (restored, second));
+            report (juce::String (fundamental, 1) + " Hz at " + juce::String (sampleRate, 0)
+                        + " Hz, second harmonic lost (dB)", loss);
+
+            weakestFundamental = juce::jmin (weakestFundamental, relativeDb (restored, second));
+            largestLoss = juce::jmax (largestLoss, loss);
+        }
+    }
+
+    check (weakestFundamental > 0.0, "reconstruction restores a missing fundamental at the harmonics' level");
+    check (largestLoss < 1.0, "reconstruction leaves the second harmonic in place");
 }
 
 void testSubharmonicGating()
@@ -415,6 +490,7 @@ int runAnalysisTests()
     testSourceCharacterisation();
     testAdaptiveRestraint();
     testReconstructionEngagement();
+    testReconstructionKeepsTheHarmonics();
     testSubharmonicGating();
     testStabilityReportsTracking();
 
