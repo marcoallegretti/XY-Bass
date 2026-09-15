@@ -493,7 +493,7 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
             // adds or removes. Blocking its dc rather than the output's leaves Mix at zero untouched.
             const auto difference = outputDcBlocker[(size_t) channel].process (processed - dry);
 
-            const auto contribution = softClip (difference * mixValue, 0.9f);
+            const auto contribution = difference * mixValue;
 
             auto result = parameters.delta ? contribution : dry + contribution;
             result *= outputValue;

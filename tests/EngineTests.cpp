@@ -1168,6 +1168,54 @@ void testDeltaMonitoring()
     check (loudest < -40.0, "delta carries none of the dry signal above the processed bands");
 }
 
+void testCleanSettingsAtHighLevel()
+{
+    section ("clean settings at high level");
+
+    auto thirdHarmonicDb = [] (float levelDb, double frequency, bool cancelling)
+    {
+        constexpr double sampleRate = 48000.0;
+
+        xyb::BassEngine engine;
+        engine.prepare (sampleRate, 256, 2);
+        engine.setParameters (position (0.0f, 0.0f));
+
+        auto buffer = makeBuffer (2, (int) sampleRate * 3);
+        fillSine (buffer, frequency, sampleRate, juce::Decibels::decibelsToGain (levelDb));
+
+        if (cancelling)
+            buffer.applyGain (1, 0, buffer.getNumSamples(), -1.0f);
+
+        render (engine, buffer, 256);
+
+        const auto span = (int) sampleRate;
+        const auto* data = buffer.getReadPointer (0) + buffer.getNumSamples() - span;
+        return relativeDb (magnitudeAt (data, span, frequency * 3.0, sampleRate),
+                           magnitudeAt (data, span, frequency, sampleRate));
+    };
+
+    auto worstTone = -1000.0;
+    auto worstCollapse = -1000.0;
+
+    for (const auto frequency : { 100.0, 150.0 })
+    {
+        const auto tone = thirdHarmonicDb (-3.0f, frequency, false);
+
+        // Folding a cancelling low end to mono removes most of the signal, so the difference from
+        // dry is nearly as loud as the input while the output itself stays well below full scale.
+        const auto collapse = thirdHarmonicDb (-1.0f, frequency, true);
+
+        report ("third harmonic of a -3 dBFS " + juce::String (frequency, 0) + " Hz tone (dBc)", tone);
+        report ("third harmonic of a -1 dBFS cancelling " + juce::String (frequency, 0) + " Hz tone (dBc)", collapse);
+
+        worstTone = juce::jmax (worstTone, tone);
+        worstCollapse = juce::jmax (worstCollapse, collapse);
+    }
+
+    check (worstTone < -40.0, "clean sub keeps a loud tone free of third harmonic distortion");
+    check (worstCollapse < -40.0, "a large difference from dry is not distorted on its way to the output");
+}
+
 void testMonoStereoConsistency()
 {
     section ("mono and stereo consistency");
@@ -2037,6 +2085,7 @@ int runEngineTests()
     testOversizedBlocks();
     testPartialMix();
     testDeltaMonitoring();
+    testCleanSettingsAtHighLevel();
     testMonoStereoConsistency();
     testHarmonicStructure();
     testSubReinforcement();
