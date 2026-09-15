@@ -71,13 +71,13 @@ void PitchTracker::prepare (double sampleRate)
     decimationFactor = juce::jmax (1, (int) std::round (sampleRate / 4000.0));
     workingRate = sampleRate / decimationFactor;
 
-    const auto antiAliasCutoff = (float) juce::jmin (1500.0, workingRate * 0.4);
-    const auto antiAlias = juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate, antiAliasCutoff, 0.54f);
-    const auto antiAliasSecond = juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate, antiAliasCutoff, 1.31f);
+    const auto antiAliasCutoff = juce::jmin (1500.0, workingRate * 0.4);
+    const auto antiAlias = juce::dsp::IIR::Coefficients<double>::makeLowPass (sampleRate, antiAliasCutoff, 0.54);
+    const auto antiAliasSecond = juce::dsp::IIR::Coefficients<double>::makeLowPass (sampleRate, antiAliasCutoff, 1.31);
 
     decimationFilter[0].setCoefficients (*antiAlias);
     decimationFilter[1].setCoefficients (*antiAliasSecond);
-    highPass.setCoefficients (*juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, 20.0f, 0.7071f));
+    highPass.setCoefficients (*juce::dsp::IIR::Coefficients<double>::makeHighPass (sampleRate, 20.0, 0.7071));
 
     minimumLag = juce::jmax (2, (int) std::floor (workingRate / maximumFrequency));
     maximumLag = (int) std::ceil (workingRate / minimumFrequency);

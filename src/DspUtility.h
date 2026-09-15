@@ -251,90 +251,93 @@ private:
     float s2 = 0.0f;
 };
 
+// Coefficients and state are double: a low cutoff at a high sample rate puts the poles closer
+// to the unit circle than float can resolve, and the filter then rings or runs away.
 class Biquad
 {
 public:
     void prepare (double newSampleRate) noexcept
     {
-        sampleRate = (float) newSampleRate;
+        sampleRate = newSampleRate;
         reset();
     }
 
-    void reset() noexcept { z1 = z2 = 0.0f; }
+    void reset() noexcept { z1 = z2 = 0.0; }
 
-    void setCoefficients (const juce::dsp::IIR::Coefficients<float>& coefficients) noexcept
+    template <typename NumericType>
+    void setCoefficients (const juce::dsp::IIR::Coefficients<NumericType>& coefficients) noexcept
     {
         jassert (coefficients.getFilterOrder() == 2);
 
         const auto* raw = coefficients.getRawCoefficients();
-        b0 = raw[0];
-        b1 = raw[1];
-        b2 = raw[2];
-        a1 = raw[3];
-        a2 = raw[4];
+        b0 = (double) raw[0];
+        b1 = (double) raw[1];
+        b2 = (double) raw[2];
+        a1 = (double) raw[3];
+        a2 = (double) raw[4];
     }
 
     void setBypass() noexcept
     {
-        b0 = 1.0f;
-        b1 = b2 = a1 = a2 = 0.0f;
+        b0 = 1.0;
+        b1 = b2 = a1 = a2 = 0.0;
     }
 
     void setPeaking (float frequency, float q, float gainDb) noexcept
     {
-        const auto a = std::pow (10.0f, gainDb * 0.025f);
+        const auto a = std::pow (10.0, (double) gainDb * 0.025);
         const auto w0 = angular (frequency);
         const auto cosine = std::cos (w0);
-        const auto alpha = std::sin (w0) / (2.0f * juce::jmax (0.05f, q));
+        const auto alpha = std::sin (w0) / (2.0 * juce::jmax (0.05, (double) q));
 
-        normalise (1.0f + alpha * a, -2.0f * cosine, 1.0f - alpha * a,
-                   1.0f + alpha / a, -2.0f * cosine, 1.0f - alpha / a);
+        normalise (1.0 + alpha * a, -2.0 * cosine, 1.0 - alpha * a,
+                   1.0 + alpha / a, -2.0 * cosine, 1.0 - alpha / a);
     }
 
     void setHighShelf (float frequency, float q, float gainDb) noexcept
     {
-        const auto a = std::pow (10.0f, gainDb * 0.025f);
+        const auto a = std::pow (10.0, (double) gainDb * 0.025);
         const auto w0 = angular (frequency);
         const auto cosine = std::cos (w0);
-        const auto alpha = std::sin (w0) / (2.0f * juce::jmax (0.05f, q));
-        const auto root = 2.0f * std::sqrt (a) * alpha;
+        const auto alpha = std::sin (w0) / (2.0 * juce::jmax (0.05, (double) q));
+        const auto root = 2.0 * std::sqrt (a) * alpha;
 
-        normalise (a * ((a + 1.0f) + (a - 1.0f) * cosine + root),
-                   -2.0f * a * ((a - 1.0f) + (a + 1.0f) * cosine),
-                   a * ((a + 1.0f) + (a - 1.0f) * cosine - root),
-                   (a + 1.0f) - (a - 1.0f) * cosine + root,
-                   2.0f * ((a - 1.0f) - (a + 1.0f) * cosine),
-                   (a + 1.0f) - (a - 1.0f) * cosine - root);
+        normalise (a * ((a + 1.0) + (a - 1.0) * cosine + root),
+                   -2.0 * a * ((a - 1.0) + (a + 1.0) * cosine),
+                   a * ((a + 1.0) + (a - 1.0) * cosine - root),
+                   (a + 1.0) - (a - 1.0) * cosine + root,
+                   2.0 * ((a - 1.0) - (a + 1.0) * cosine),
+                   (a + 1.0) - (a - 1.0) * cosine - root);
     }
 
     void setHighPass (float frequency, float q) noexcept
     {
         const auto w0 = angular (frequency);
         const auto cosine = std::cos (w0);
-        const auto alpha = std::sin (w0) / (2.0f * juce::jmax (0.05f, q));
+        const auto alpha = std::sin (w0) / (2.0 * juce::jmax (0.05, (double) q));
 
-        normalise ((1.0f + cosine) * 0.5f, -(1.0f + cosine), (1.0f + cosine) * 0.5f,
-                   1.0f + alpha, -2.0f * cosine, 1.0f - alpha);
+        normalise ((1.0 + cosine) * 0.5, -(1.0 + cosine), (1.0 + cosine) * 0.5,
+                   1.0 + alpha, -2.0 * cosine, 1.0 - alpha);
     }
 
     float process (float input) noexcept
     {
-        const auto output = b0 * input + z1;
-        z1 = b1 * input - a1 * output + z2;
-        z2 = b2 * input - a2 * output;
-        return output;
+        const auto output = b0 * (double) input + z1;
+        z1 = b1 * (double) input - a1 * output + z2;
+        z2 = b2 * (double) input - a2 * output;
+        return (float) output;
     }
 
 private:
-    float angular (float frequency) const noexcept
+    double angular (float frequency) const noexcept
     {
-        const auto limited = juce::jlimit (5.0f, sampleRate * 0.48f, frequency);
-        return juce::MathConstants<float>::twoPi * limited / sampleRate;
+        const auto limited = juce::jlimit (5.0, sampleRate * 0.48, (double) frequency);
+        return juce::MathConstants<double>::twoPi * limited / sampleRate;
     }
 
-    void normalise (float nb0, float nb1, float nb2, float na0, float na1, float na2) noexcept
+    void normalise (double nb0, double nb1, double nb2, double na0, double na1, double na2) noexcept
     {
-        const auto inverse = 1.0f / na0;
+        const auto inverse = 1.0 / na0;
         b0 = nb0 * inverse;
         b1 = nb1 * inverse;
         b2 = nb2 * inverse;
@@ -342,9 +345,9 @@ private:
         a2 = na2 * inverse;
     }
 
-    float sampleRate = 44100.0f;
-    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
-    float z1 = 0.0f, z2 = 0.0f;
+    double sampleRate = 44100.0;
+    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+    double z1 = 0.0, z2 = 0.0;
 };
 
 class DelayBuffer

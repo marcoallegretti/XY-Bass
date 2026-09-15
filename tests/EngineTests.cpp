@@ -612,21 +612,22 @@ void testFilterReplacements()
     juce::Random random (0xf17e);
     auto worstBiquad = 0.0;
 
-    const auto designs = { juce::dsp::IIR::Coefficients<float>::makeLowPass (48000.0, 1500.0f, 0.54f),
-                           juce::dsp::IIR::Coefficients<float>::makeLowPass (44100.0, 1470.0f, 1.31f),
-                           juce::dsp::IIR::Coefficients<float>::makeHighPass (96000.0, 20.0f, 0.7071f) };
+    const auto designs = { juce::dsp::IIR::Coefficients<double>::makeLowPass (48000.0, 1500.0, 0.54),
+                           juce::dsp::IIR::Coefficients<double>::makeLowPass (44100.0, 1470.0, 1.31),
+                           juce::dsp::IIR::Coefficients<double>::makeHighPass (96000.0, 20.0, 0.7071),
+                           juce::dsp::IIR::Coefficients<double>::makeHighPass (768000.0, 14.0, 0.5412) };
 
     for (const auto& design : designs)
     {
-        juce::dsp::IIR::Filter<float> reference (design);
+        juce::dsp::IIR::Filter<double> reference (design);
         xyb::Biquad candidate;
         candidate.setCoefficients (*design);
 
         for (int i = 0; i < 48000; ++i)
         {
             const auto input = random.nextFloat() * 2.0f - 1.0f;
-            const auto difference = std::abs (reference.processSample (input) - candidate.process (input));
-            worstBiquad = juce::jmax (worstBiquad, (double) difference);
+            const auto difference = std::abs (reference.processSample ((double) input) - (double) candidate.process (input));
+            worstBiquad = juce::jmax (worstBiquad, difference);
         }
     }
 
@@ -870,6 +871,36 @@ void testStability()
             }
         }
     }
+}
+
+void testHighSampleRateFilters()
+{
+    section ("filters at high sample rates");
+
+    auto loudest = 0.0;
+    auto finite = true;
+
+    for (const auto sampleRate : { 176400.0, 192000.0, 352800.0, 384000.0, 768000.0 })
+    {
+        for (const auto x : { 0.0f, 0.1f, 0.5f })
+        {
+            xyb::BassEngine engine;
+            engine.prepare (sampleRate, 512, 2);
+            engine.setParameters (position (x, 0.3f));
+
+            // A sub-bass tone is where the lowest cutoffs sit closest to the unit circle.
+            auto buffer = makeBuffer (2, (int) (sampleRate * 5.0));
+            fillSine (buffer, 45.0, sampleRate, juce::Decibels::decibelsToGain (-10.0f));
+            render (engine, buffer, 512);
+
+            finite = finite && isFinite (buffer);
+            loudest = juce::jmax (loudest, peak (buffer));
+        }
+    }
+
+    report ("loudest output from a -10 dBFS tone (dB)", juce::Decibels::gainToDecibels (loudest, -200.0));
+    check (finite, "high sample rates stay finite");
+    check (loudest < juce::Decibels::decibelsToGain (-3.0), "low cutoffs stay stable up to 768 kHz");
 }
 
 void testSilenceAndDenormals()
@@ -1944,6 +1975,7 @@ int runEngineTests()
     testShaperCharacter();
     testBandReconstruction();
     testStability();
+    testHighSampleRateFilters();
     testDegenerateSetup();
     testHalfbandOversampler();
     testFilterReplacements();
