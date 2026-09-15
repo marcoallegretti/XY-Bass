@@ -82,6 +82,9 @@ juce_add_plugin(XYBass
     PRODUCT_NAME "XY Bass"
     VERSION "${XYBASS_VERSION}"
     COMPANY_NAME "23DSP"
+    COMPANY_WEBSITE "https://23dsp.gumroad.com"
+    COMPANY_COPYRIGHT "2026, 23DSP"
+    DESCRIPTION "Make bass deeper, heavier or audible on small speakers with one gesture"
     BUNDLE_ID com.23dsp.xybass
     PLUGIN_MANUFACTURER_CODE Ttds
     PLUGIN_CODE XyBs
