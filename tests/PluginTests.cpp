@@ -2,6 +2,7 @@
 #include "TestSuites.h"
 
 #include <iostream>
+#include <tuple>
 #include <vector>
 
 namespace
@@ -415,6 +416,57 @@ void testHostReset()
     check (juce::exactlyEqual (loudest, 0.0), "a host reset leaves nothing of the previous audio");
 }
 
+void testReportedTail()
+{
+    section ("reported tail");
+
+    const auto sampleRate = 48000.0;
+    constexpr int blockSize = 256;
+    auto longest = 0.0;
+    auto shortestReport = 1000.0;
+
+    for (const auto& [x, y, frequency] : { std::tuple<float, float, double> { 0.0f, 1.0f, 120.0 },
+                                           { 0.0f, 0.2f, 55.0 }, { 0.5f, 0.5f, 55.0 }, { 1.0f, 1.0f, 80.0 } })
+    {
+        XYBassProcessor processor;
+        processor.setPlayConfigDetails (2, 2, sampleRate, blockSize);
+        auto& state = processor.getValueTreeState();
+        state.getParameter (xyb::ids::positionX)->setValueNotifyingHost (x);
+        state.getParameter (xyb::ids::positionY)->setValueNotifyingHost (y);
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        const auto noteLength = (int) sampleRate * 3;
+        juce::AudioBuffer<float> buffer (2, noteLength + (int) sampleRate * 3);
+        buffer.clear();
+
+        for (int channel = 0; channel < 2; ++channel)
+            for (int i = 0; i < noteLength; ++i)
+                buffer.setSample (channel, i, 0.4f * (float) std::sin (juce::MathConstants<double>::twoPi * frequency * i / sampleRate));
+
+        renderSchedule (processor, buffer, { blockSize });
+
+        auto steady = 0.0;
+
+        for (int i = noteLength - (int) sampleRate / 2; i < noteLength; ++i)
+            steady = juce::jmax (steady, (double) std::abs (buffer.getSample (0, i)));
+
+        // The tail runs from the last input sample until the output stays 60 dB below its level.
+        auto last = noteLength;
+
+        for (int i = noteLength; i < buffer.getNumSamples(); ++i)
+            if (std::abs (buffer.getSample (0, i)) > steady * 0.001)
+                last = i;
+
+        longest = juce::jmax (longest, (double) (last - noteLength) / sampleRate);
+        shortestReport = juce::jmin (shortestReport, processor.getTailLengthSeconds());
+        processor.releaseResources();
+    }
+
+    report ("longest time to fall 60 dB after the input stops (s)", longest);
+    report ("reported tail (s)", shortestReport);
+    check (shortestReport >= longest, "the reported tail covers the time the output takes to fall silent");
+}
+
 void testEditorLifecycle()
 {
     section ("editor lifecycle");
@@ -548,6 +600,7 @@ int runPluginTests()
     testVariableBlockSizes();
     testPrepareUsesCurrentGains();
     testHostReset();
+    testReportedTail();
     testFactoryPresets();
     testEditorLifecycle();
 

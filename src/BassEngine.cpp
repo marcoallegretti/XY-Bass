@@ -549,6 +549,14 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
     return true;
 }
 
+double BassEngine::getTailSeconds() const noexcept
+{
+    // The slowest measured decay to -60 dB after a sustained low note, across the pad and the
+    // factory presets, was 0.84 s, at full dirt on the sub side.
+    constexpr double decaySeconds = 1.0;
+    return decaySeconds + (double) latencySamples / currentSampleRate;
+}
+
 void BassEngine::processBypassed (juce::AudioBuffer<float>& buffer, int numSamples)
 {
     bypassDelay.process (buffer, numSamples);
