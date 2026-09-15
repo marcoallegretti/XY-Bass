@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-set(XYBASS_VERSION "0.1.0")
+set(XYBASS_VERSION "0.9.0")
 
 project(XYBass VERSION ${XYBASS_VERSION} LANGUAGES C CXX)
 
