@@ -570,39 +570,81 @@ void testBandReconstruction()
 {
     section ("band reconstruction");
 
-    const auto sampleRate = 48000.0;
-    const auto length = 1 << 15;
+    auto worstError = 0.0;
+    auto worstShape = 0.0;
+    auto latencyMatches = true;
 
-    juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) length, 1 };
-    double worst = 0.0;
-
-    for (auto frequency : { 25.0, 40.0, 60.0, 100.0, 150.0, 220.0, 350.0, 500.0, 800.0, 2000.0, 8000.0 })
+    for (const auto sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
     {
+        const auto length = (int) sampleRate * 2;
+        constexpr int period = 128;
+
         xyb::BandSplitter splitter;
-        splitter.prepare (spec);
-        splitter.setCrossovers (150.0f, 500.0f);
+        splitter.prepare (sampleRate, 1);
+        const auto latency = splitter.getLatencySamples();
+        latencyMatches = latencyMatches && std::abs ((double) latency / sampleRate - 0.0085) < 0.001;
 
         auto source = makeBuffer (1, length);
-        fillSine (source, frequency, sampleRate, 0.25f);
+        fillNoise (source, 0.5f, 3);
+        auto bands = makeBuffer (3, length);
 
-        std::vector<float> summed ((size_t) length);
-
-        for (int i = 0; i < length; ++i)
+        // The crossover sweeps its whole range, as pitch tracking would move it.
+        for (int start = 0; start < length; start += period)
         {
-            const auto bands = splitter.process (0, source.getSample (0, i));
-            summed[(size_t) i] = bands.low + bands.mid + bands.character;
+            const auto sweep = 0.5 + 0.5 * std::sin ((double) start * 0.0007);
+            splitter.setCrossover (xyb::BandSplitter::lowestCrossover
+                                   + (float) sweep * (xyb::BandSplitter::highestCrossover - xyb::BandSplitter::lowestCrossover));
+            splitter.process (0, source.getReadPointer (0) + start, bands.getWritePointer (0) + start,
+                              bands.getWritePointer (1) + start, bands.getWritePointer (2) + start,
+                              juce::jmin (period, length - start));
         }
 
-        const auto skip = 8192;
-        const auto periods = std::floor ((double) (length - skip) * frequency / sampleRate);
-        const auto span = (int) std::floor (periods * sampleRate / frequency);
-        const auto reference = rms (source.getReadPointer (0) + skip, span);
-        const auto reconstructed = rms (summed.data() + skip, span);
-        worst = juce::jmax (worst, std::abs (relativeDb (reconstructed, reference)));
+        for (int i = latency; i < length; ++i)
+        {
+            const auto summed = (double) bands.getSample (0, i) + bands.getSample (1, i) + bands.getSample (2, i);
+            worstError = juce::jmax (worstError, std::abs (summed - source.getSample (0, i - latency)) / 0.5);
+        }
+
+        // Each band keeps the magnitude of a fourth order Linkwitz-Riley split wherever that
+        // magnitude is above -30 dB.
+        for (const auto crossover : { xyb::BandSplitter::lowestCrossover, xyb::BandSplitter::highestCrossover })
+        {
+            for (auto frequency = 20.0; frequency < 4000.0; frequency *= std::pow (2.0, 1.0 / 4.0))
+            {
+                xyb::BandSplitter probe;
+                probe.prepare (sampleRate, 1);
+                probe.setCrossover (crossover);
+
+                const auto span = (int) (sampleRate * 0.5);
+                auto tone = makeBuffer (1, span * 2);
+                fillSine (tone, frequency, sampleRate, 0.5f);
+                auto split = makeBuffer (3, span * 2);
+                probe.process (0, tone.getReadPointer (0), split.getWritePointer (0), split.getWritePointer (1),
+                               split.getWritePointer (2), span * 2);
+
+                const auto lowRatio = std::pow (frequency / crossover, 4.0);
+                const auto upperRatio = std::pow (frequency / xyb::BandSplitter::characterCrossover, 4.0);
+                const auto lowTarget = 1.0 / (1.0 + lowRatio);
+                const auto characterTarget = upperRatio / (1.0 + upperRatio);
+
+                for (const auto& [band, target] : { std::pair<int, double> { 0, lowTarget }, { 2, characterTarget } })
+                {
+                    if (target < juce::Decibels::decibelsToGain (-30.0))
+                        continue;
+
+                    const auto measured = magnitudeAt (split.getReadPointer (band) + span, span, frequency, sampleRate) / 0.5;
+                    worstShape = juce::jmax (worstShape, std::abs (relativeDb (measured, target)));
+                }
+            }
+        }
     }
 
-    report ("worst reconstruction error", worst);
-    check (worst < 0.05, "the band split recombines to a flat magnitude response");
+    report ("worst reconstruction error (dB)", juce::Decibels::gainToDecibels (worstError, -200.0));
+    report ("worst band shape error against Linkwitz-Riley (dB)", worstShape);
+
+    check (worstError < 1.0e-6, "the bands sum to the delayed input while the crossover moves");
+    check (worstShape < 1.0, "the linear phase bands keep their fourth order magnitudes");
+    check (latencyMatches, "the split delay is the same length of time at every rate");
 }
 
 void testFilterReplacements()
@@ -631,62 +673,9 @@ void testFilterReplacements()
         }
     }
 
-    auto worstSplit = 0.0;
-
-    for (const auto sampleRate : { 44100.0, 48000.0, 96000.0 })
-    {
-        const juce::dsp::ProcessSpec spec { sampleRate, 256, 2 };
-
-        juce::dsp::LinkwitzRileyFilter<float> lowSplit, characterSplit, lowAllpass;
-
-        for (auto* filter : { &lowSplit, &characterSplit })
-        {
-            filter->prepare (spec);
-            filter->setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
-        }
-
-        lowAllpass.prepare (spec);
-        lowAllpass.setType (juce::dsp::LinkwitzRileyFilterType::allpass);
-
-        xyb::BandSplitter splitter;
-        splitter.prepare (spec);
-
-        for (int block = 0; block < 200; ++block)
-        {
-            const auto lowHz = 60.0f + 180.0f * random.nextFloat();
-
-            lowSplit.setCutoffFrequency (lowHz);
-            characterSplit.setCutoffFrequency (500.0f);
-            lowAllpass.setCutoffFrequency (500.0f);
-            splitter.setCrossovers (lowHz, 500.0f);
-
-            for (int i = 0; i < 256; ++i)
-            {
-                for (int channel = 0; channel < 2; ++channel)
-                {
-                    const auto input = random.nextFloat() * 2.0f - 1.0f;
-
-                    float low = 0.0f, high = 0.0f, mid = 0.0f, character = 0.0f;
-                    lowSplit.processSample (channel, input, low, high);
-                    const auto expectedLow = lowAllpass.processSample (channel, low);
-                    characterSplit.processSample (channel, high, mid, character);
-
-                    const auto bands = splitter.process (channel, input);
-
-                    worstSplit = juce::jmax (worstSplit,
-                                             (double) std::abs (expectedLow - bands.low),
-                                             (double) std::abs (mid - bands.mid));
-                    worstSplit = juce::jmax (worstSplit, (double) std::abs (character - bands.character));
-                }
-            }
-        }
-    }
-
     report ("worst biquad difference from JUCE (dB)", juce::Decibels::gainToDecibels (worstBiquad, -200.0));
-    report ("worst crossover difference from JUCE (dB)", juce::Decibels::gainToDecibels (worstSplit, -200.0));
 
     check (worstBiquad < 1.0e-6, "the biquad reproduces JUCE's IIR filter");
-    check (worstSplit < 1.0e-6, "the crossover reproduces JUCE's Linkwitz-Riley filters");
 }
 
 void testHalfbandOversampler()
@@ -961,26 +950,38 @@ void testDcRejection()
 {
     section ("dc rejection");
 
-    xyb::BassEngine engine;
-    engine.prepare (48000.0, 256, 2);
-    engine.setParameters (position (0.0f, 1.0f));
+    // A source offset reaches the output as it does through the dry path, so only the dc the
+    // processing adds is measured, once the low end dynamics have settled.
+    auto addedOffset = [] (float offset, float toneAmplitude)
+    {
+        xyb::BassEngine engine;
+        engine.prepare (48000.0, 256, 2);
+        engine.setParameters (position (0.0f, 1.0f));
 
-    auto buffer = makeBuffer (2, 48000 * 2);
+        auto buffer = makeBuffer (2, 48000 * 4);
+        fillSine (buffer, 55.0, 48000.0, toneAmplitude);
 
-    for (int channel = 0; channel < 2; ++channel)
-        juce::FloatVectorOperations::fill (buffer.getWritePointer (channel), 0.5f, buffer.getNumSamples());
+        for (int channel = 0; channel < 2; ++channel)
+            juce::FloatVectorOperations::add (buffer.getWritePointer (channel), offset, buffer.getNumSamples());
 
-    render (engine, buffer, 256);
+        render (engine, buffer, 256);
 
-    double sum = 0.0;
-    const auto* data = buffer.getReadPointer (0) + 48000;
+        double sum = 0.0;
+        const auto* data = buffer.getReadPointer (0) + 48000 * 2;
 
-    for (int i = 0; i < 48000; ++i)
-        sum += data[i];
+        for (int i = 0; i < 48000 * 2; ++i)
+            sum += data[i];
 
-    const auto offset = std::abs (sum / 48000.0);
-    report ("residual dc", offset);
-    check (offset < 0.002, "dc offset is removed");
+        return std::abs (sum / (48000.0 * 2.0) - offset);
+    };
+
+    const auto onOffset = addedOffset (0.5f, 0.0f);
+    const auto fromTone = addedOffset (0.0f, 0.5f);
+
+    report ("dc added to an offset source", onOffset);
+    report ("dc left by asymmetric saturation", fromTone);
+    check (onOffset < 0.002, "the processing adds no dc to an offset source");
+    check (fromTone < 0.002, "dc from asymmetric saturation is removed");
 }
 
 void testDryPathAlignment()
@@ -1071,49 +1072,100 @@ void testOversizedBlocks()
     check (worst < 1.0e-6, "a block larger than the prepared size is processed in full");
 }
 
-void testDeltaMatchesDifference()
+double steadyGainDb (float x, float y, float mix, bool autoGain, bool delta, double frequency)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr float amplitude = 0.05f;
+
+    xyb::BassEngine engine;
+    engine.prepare (sampleRate, 256, 2);
+
+    auto parameters = position (x, y);
+    parameters.mix = mix;
+    parameters.autoGain = autoGain;
+    parameters.delta = delta;
+    engine.setParameters (parameters);
+
+    auto buffer = makeBuffer (2, (int) (sampleRate * 1.5));
+    fillSine (buffer, frequency, sampleRate, amplitude);
+    render (engine, buffer, 256);
+
+    const auto span = (int) (sampleRate * 0.5);
+    return relativeDb (magnitudeAt (buffer.getReadPointer (0) + buffer.getNumSamples() - span, span, frequency, sampleRate),
+                       amplitude);
+}
+
+void testPartialMix()
+{
+    section ("partial mix");
+
+    struct Setting
+    {
+        float x, y;
+        bool autoGain;
+        std::vector<float> mixes;
+        const char* name;
+    };
+
+    const Setting settings[] = { { 0.5f, 0.5f, false, { 0.25f, 0.5f, 0.75f }, "centre" },
+                                 { 0.5f, 0.0f, false, { 0.25f, 0.5f, 0.75f }, "clean middle" },
+                                 { 1.0f, 0.5f, false, { 0.25f, 0.5f, 0.75f }, "translate" },
+                                 { 0.44f, 0.14f, true, { 0.6f }, "gentle mixbus" } };
+
+    auto worst = 1000.0;
+    auto worstFrequency = 0.0;
+
+    for (const auto& setting : settings)
+    {
+        auto settingWorst = 1000.0;
+
+        for (auto frequency = 40.0; frequency <= 4000.0; frequency *= std::pow (2.0, 1.0 / 3.0))
+        {
+            const auto dry = steadyGainDb (setting.x, setting.y, 0.0f, setting.autoGain, false, frequency);
+            const auto wet = steadyGainDb (setting.x, setting.y, 1.0f, setting.autoGain, false, frequency);
+
+            for (const auto mix : setting.mixes)
+            {
+                const auto margin = steadyGainDb (setting.x, setting.y, mix, setting.autoGain, false, frequency)
+                                    - juce::jmin (dry, wet);
+
+                settingWorst = juce::jmin (settingWorst, margin);
+
+                if (margin < worst)
+                {
+                    worst = margin;
+                    worstFrequency = frequency;
+                }
+            }
+        }
+
+        report (juce::String ("deepest partial mix dip below both ends, ") + setting.name + " (dB)", settingWorst);
+    }
+
+    report ("frequency of the deepest dip", worstFrequency);
+    check (worst > -1.0, "a partial mix never cancels below both the dry and the processed response");
+}
+
+void testDeltaMonitoring()
 {
     section ("delta monitoring");
 
-    auto source = makeBuffer (2, 48000);
-    fillNotePattern (source, 55.0, 48000.0, 0.5f, 0.5);
+    auto loudest = -1000.0;
 
-    Buffer processed (source);
-    Buffer delta (source);
-
+    // At clean positions nothing is processed this far above the bass bands, so anything delta
+    // carries there would be dry signal leaking through misaligned bands.
+    for (const auto& [x, y] : { std::pair<float, float> { 0.5f, 0.0f }, { 0.0f, 0.0f }, { 1.0f, 0.0f } })
     {
-        xyb::BassEngine engine;
-        engine.prepare (48000.0, 256, 2);
-        auto parameters = position (0.75f, 0.55f);
-        parameters.autoGain = false;
-        engine.setParameters (parameters);
-        render (engine, processed, 256);
+        for (const auto frequency : { 800.0, 1500.0 })
+        {
+            const auto level = steadyGainDb (x, y, 1.0f, true, true, frequency);
+            report ("delta at " + juce::String (frequency, 0) + " Hz, position " + juce::String (x, 2) + "/"
+                        + juce::String (y, 2) + " (dB)", level);
+            loudest = juce::jmax (loudest, level);
+        }
     }
 
-    {
-        xyb::BassEngine engine;
-        engine.prepare (48000.0, 256, 2);
-        auto parameters = position (0.75f, 0.55f);
-        parameters.autoGain = false;
-        parameters.delta = true;
-        engine.setParameters (parameters);
-        render (engine, delta, 256);
-    }
-
-    xyb::BassEngine reference;
-    reference.prepare (48000.0, 256, 2);
-    const auto latency = reference.getLatencySamples();
-
-    double worst = 0.0;
-
-    for (int i = latency + 512; i < source.getNumSamples(); ++i)
-    {
-        const auto expected = processed.getSample (0, i) - source.getSample (0, i - latency);
-        worst = juce::jmax (worst, (double) std::abs (delta.getSample (0, i) - expected));
-    }
-
-    report ("delta error", worst);
-    check (worst < 1.0e-4, "delta equals processed minus aligned dry");
+    check (loudest < -40.0, "delta carries none of the dry signal above the processed bands");
 }
 
 void testMonoStereoConsistency()
@@ -1983,7 +2035,8 @@ int runEngineTests()
     testDcRejection();
     testDryPathAlignment();
     testOversizedBlocks();
-    testDeltaMatchesDifference();
+    testPartialMix();
+    testDeltaMonitoring();
     testMonoStereoConsistency();
     testHarmonicStructure();
     testSubReinforcement();

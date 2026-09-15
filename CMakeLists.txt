@@ -97,6 +97,7 @@ else()
 endif()
 
 add_library(XYBassDsp STATIC
+    src/BandSplitter.cpp
     src/BassEngine.cpp
     src/PitchTracker.cpp
     src/SourceAnalyser.cpp

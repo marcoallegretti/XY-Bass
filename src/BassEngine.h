@@ -87,9 +87,10 @@ private:
 
     HalfbandOversampler oversampler;
 
-    juce::AudioBuffer<float> dryBuffer, saturationBuffer, parallelBuffer, monoBuffer;
+    juce::AudioBuffer<float> dryBuffer, lowBuffer, midBuffer, characterBuffer;
+    juce::AudioBuffer<float> saturationBuffer, linearBuffer, parallelBuffer, monoBuffer;
     std::vector<ShaperControls> shaperControls;
-    DelayBuffer dryDelay, parallelDelay, bypassDelay;
+    DelayBuffer dryDelay, linearDelay, parallelDelay, bypassDelay;
 
     std::array<std::array<Biquad, 2>, 2> subsonicFilter;
     std::array<DcBlocker, 2> outputDcBlocker;

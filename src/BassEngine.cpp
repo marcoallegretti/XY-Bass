@@ -3,7 +3,6 @@
 namespace xyb
 {
 
-static constexpr float kCharacterCrossover = 500.0f;
 static constexpr float kNormalisationReference = 0.2f;
 static constexpr float kNormalisationExponent = 0.7f;
 
@@ -17,9 +16,7 @@ void BassEngine::prepare (double newSampleRate, int maximumBlockSize, int numCha
     preparedBlockSize = juce::jmax (16, maximumBlockSize);
     controlPeriod = juce::jlimit (16, 1024, juce::nextPowerOfTwo (juce::roundToInt (sampleRate / 187.5)));
 
-    const juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) controlPeriod, (juce::uint32) preparedChannels };
-
-    splitter.prepare (spec);
+    splitter.prepare (sampleRate, preparedChannels);
     pitchTracker.prepare (sampleRate);
     analyser.prepare (sampleRate);
     subEngine.prepare (sampleRate);
@@ -32,20 +29,30 @@ void BassEngine::prepare (double newSampleRate, int maximumBlockSize, int numCha
     oversamplingShift = stages;
 
     oversampler.prepare (preparedChannels, controlPeriod, stages > 0);
-    latencySamples = oversampler.getLatencyInSamples();
+
+    // The bands arrive delayed by the splitter, so only the saturation path's extra delay
+    // separates them from the recombined wet signal.
+    const auto oversamplerLatency = oversampler.getLatencyInSamples();
+    latencySamples = oversamplerLatency + splitter.getLatencySamples();
 
     dryBuffer.setSize (preparedChannels, controlPeriod);
+    lowBuffer.setSize (preparedChannels, controlPeriod);
+    midBuffer.setSize (preparedChannels, controlPeriod);
+    characterBuffer.setSize (preparedChannels, controlPeriod);
     saturationBuffer.setSize (preparedChannels, controlPeriod);
+    linearBuffer.setSize (preparedChannels, controlPeriod);
     parallelBuffer.setSize (preparedChannels, controlPeriod);
     shaperControls.assign ((size_t) controlPeriod, ShaperControls {});
     monoBuffer.setSize (1, controlPeriod);
 
     dryDelay.prepare (preparedChannels, latencySamples + 8);
-    parallelDelay.prepare (preparedChannels, latencySamples + 8);
+    linearDelay.prepare (preparedChannels, oversamplerLatency + 8);
+    parallelDelay.prepare (preparedChannels, oversamplerLatency + 8);
     bypassDelay.prepare (preparedChannels, latencySamples + 8);
 
     dryDelay.setDelay (latencySamples);
-    parallelDelay.setDelay (latencySamples);
+    linearDelay.setDelay (oversamplerLatency);
+    parallelDelay.setDelay (oversamplerLatency);
     bypassDelay.setDelay (latencySamples);
 
     for (auto& channelFilters : subsonicFilter)
@@ -110,12 +117,17 @@ void BassEngine::reset()
     oversampler.reset();
 
     dryBuffer.clear();
+    lowBuffer.clear();
+    midBuffer.clear();
+    characterBuffer.clear();
     saturationBuffer.clear();
+    linearBuffer.clear();
     parallelBuffer.clear();
     std::fill (shaperControls.begin(), shaperControls.end(), ShaperControls {});
     monoBuffer.clear();
 
     dryDelay.reset();
+    linearDelay.reset();
     parallelDelay.reset();
     bypassDelay.reset();
 
@@ -177,7 +189,7 @@ void BassEngine::updateControls (int numSamples)
     spreadControl.setTarget (targets.harmonicSpread);
     coreWeight.setTarget (juce::jlimit (0.0f, 1.0f, -features.correlation));
 
-    splitter.setCrossovers (bassCrossoverControl.advance (numSamples), kCharacterCrossover);
+    splitter.setCrossover (bassCrossoverControl.advance (numSamples));
 
     const auto subsonic = subsonicControl.advance (numSamples);
 
@@ -298,6 +310,10 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         }
     }
 
+    for (int channel = 0; channel < numChannels; ++channel)
+        splitter.process (channel, buffer.getReadPointer (channel), lowBuffer.getWritePointer (channel),
+                          midBuffer.getWritePointer (channel), characterBuffer.getWritePointer (channel), numSamples);
+
     for (int i = 0; i < numSamples; ++i)
     {
         const auto narrowing = monoAmount.next();
@@ -311,13 +327,14 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         float lowBand[2] = { 0.0f, 0.0f };
         float midBand[2] = { 0.0f, 0.0f };
         float characterBand[2] = { 0.0f, 0.0f };
+        float alignedValue[2] = { 0.0f, 0.0f };
 
         for (int channel = 0; channel < numChannels; ++channel)
         {
-            const auto bands = splitter.process (channel, channelValue[channel]);
-            lowBand[channel] = bands.low;
-            midBand[channel] = bands.mid;
-            characterBand[channel] = bands.character;
+            lowBand[channel] = lowBuffer.getReadPointer (channel)[i];
+            midBand[channel] = midBuffer.getReadPointer (channel)[i];
+            characterBand[channel] = characterBuffer.getReadPointer (channel)[i];
+            alignedValue[channel] = lowBand[channel] + midBand[channel] + characterBand[channel];
         }
 
         const auto monoLow = stereo ? 0.5f * ((1.0f + polarity) * lowBand[0] + (1.0f - polarity) * lowBand[1])
@@ -325,6 +342,9 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         const auto monoInput = stereo ? 0.5f * ((1.0f + polarity) * channelValue[0]
                                                 + (1.0f - polarity) * channelValue[1])
                                       : channelValue[0];
+        const auto monoAligned = stereo ? 0.5f * ((1.0f + polarity) * alignedValue[0]
+                                                  + (1.0f - polarity) * alignedValue[1])
+                                        : alignedValue[0];
 
         analyser.pushMono (monoInput);
         analyser.pushStereo (lowBand[0], stereo ? lowBand[1] : lowBand[0]);
@@ -348,8 +368,10 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
                                               translateEngine.getFundamentalQuadrature());
         const auto harmonicBus = translateEngine.process (fundamentalBand);
 
-        const auto attack = transientFast.process (monoInput);
-        const auto sustain = transientSlow.process (monoInput);
+        // Transients are read from the input as delayed with the bands, so drive eases off as the
+        // attack reaches the shaper rather than before it.
+        const auto attack = transientFast.process (monoAligned);
+        const auto sustain = transientSlow.process (monoAligned);
         const auto transientIndex = juce::jlimit (0.0f, 1.0f,
                                                   (attack / juce::jmax (sustain, 1.0e-5f) - 1.02f) * 1.2f);
         const auto transientScale = 1.0f - transientDepthControl.next() * transientIndex;
@@ -371,6 +393,7 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
 
             const auto saturationInput = lowOut * (1.0f - protection) + midOut;
             saturationBuffer.getWritePointer (channel)[i] = saturationInput;
+            linearBuffer.getWritePointer (channel)[i] = saturationInput;
             parallelBuffer.getWritePointer (channel)[i] = lowOut * protection + characterBand[channel];
 
             saturationMono += saturationInput;
@@ -420,6 +443,7 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
         oversampler.processSamplesDown (block);
     }
 
+    linearDelay.process (linearBuffer, numSamples);
     parallelDelay.process (parallelBuffer, numSamples);
     dryDelay.process (dryBuffer, numSamples);
 
@@ -438,12 +462,15 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
 
         for (int channel = 0; channel < numChannels; ++channel)
         {
-            auto value = saturationBuffer.getReadPointer (channel)[i] * shaperControls[(size_t) i].outputGain
-                         + parallelBuffer.getReadPointer (channel)[i];
+            // Only what the saturator changes passes the subsonic filter, where its dc and
+            // infrasonic products are; the bands it carries stay aligned with the dry path.
+            const auto linear = linearBuffer.getReadPointer (channel)[i];
+            auto shaped = saturationBuffer.getReadPointer (channel)[i] * shaperControls[(size_t) i].outputGain - linear;
+            shaped = subsonicFilter[(size_t) channel][1].process (subsonicFilter[(size_t) channel][0].process (shaped));
 
-            value = subsonicFilter[(size_t) channel][1].process (subsonicFilter[(size_t) channel][0].process (value));
+            auto value = linear + shaped + parallelBuffer.getReadPointer (channel)[i];
+
             value = spectralBalance.process (channel, value);
-            value = outputDcBlocker[(size_t) channel].process (value);
 
             wet[channel] = value;
             wetMono += value;
@@ -462,7 +489,11 @@ bool BassEngine::processChunk (juce::AudioBuffer<float>& buffer)
             const auto dry = dryBuffer.getReadPointer (channel)[i];
             const auto processed = wet[channel] * autoGainValue;
 
-            const auto contribution = softClip ((processed - dry) * mixValue, 0.9f);
+            // Every path shares the dry delay, so the difference holds only what the processing
+            // adds or removes. Blocking its dc rather than the output's leaves Mix at zero untouched.
+            const auto difference = outputDcBlocker[(size_t) channel].process (processed - dry);
+
+            const auto contribution = softClip (difference * mixValue, 0.9f);
 
             auto result = parameters.delta ? contribution : dry + contribution;
             result *= outputValue;

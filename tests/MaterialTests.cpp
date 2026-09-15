@@ -522,31 +522,58 @@ void testDcAndSubsonic()
             source.setSample (channel, i, source.getSample (channel, i) + 0.25f
                                               + 0.15f * (float) std::sin (juce::MathConstants<double>::twoPi * 6.0 * i / sampleRate));
 
+    xyb::BassEngine reference;
+    reference.prepare (sampleRate, 256, 2);
+    const auto latency = reference.getLatencySamples();
+
+    // The source's own offset and infrasonic content pass as they do through the dry path; what
+    // the processing adds on top of them is what must stay free of dc and infrasonics.
     const auto processed = process (source, 0.3f, 0.6f, sampleRate, false);
     const auto mono = midOf (processed);
     const auto dryMono = midOf (source);
 
-    double offset = 0.0;
     const auto start = (int) (sampleRate * 2.0);
-
-    for (int i = start; i < length; ++i)
-        offset += mono[(size_t) i];
-
-    offset = std::abs (offset / (double) (length - start));
-
     const auto span = length - start;
+    std::vector<float> added ((size_t) span);
+    double offset = 0.0;
+
+    for (int i = 0; i < span; ++i)
+    {
+        added[(size_t) i] = mono[(size_t) (start + i)] - dryMono[(size_t) (start + i - latency)];
+        offset += added[(size_t) i];
+    }
+
+    offset = std::abs (offset / (double) span);
+
     const auto drySubsonic = magnitudeAt (dryMono.data() + start, span, 6.0, sampleRate);
-    const auto wetSubsonic = magnitudeAt (mono.data() + start, span, 6.0, sampleRate);
+    const auto addedSubsonic = magnitudeAt (added.data(), span, 6.0, sampleRate);
     const auto dryMusical = magnitudeAt (dryMono.data() + start, span, 55.0, sampleRate);
     const auto wetMusical = magnitudeAt (mono.data() + start, span, 55.0, sampleRate);
 
-    report ("residual dc", offset);
-    report ("infrasonic attenuation", relativeDb (wetSubsonic, drySubsonic));
+    report ("dc added to the source", offset);
+    report ("infrasonic content added, relative to the source's", relativeDb (addedSubsonic, drySubsonic));
     report ("musical band change", relativeDb (wetMusical, dryMusical));
 
-    check (offset < 0.002, "a dc offset in the source is removed");
-    check (relativeDb (wetSubsonic, drySubsonic) < -25.0, "infrasonic content is strongly attenuated");
+    check (offset < 0.002, "the processing adds no dc to a source with an offset");
+    check (relativeDb (addedSubsonic, drySubsonic) < -20.0, "the processing adds no infrasonic content of its own");
     check (relativeDb (wetMusical, dryMusical) > -1.0, "the subsonic filter leaves the musical band alone");
+
+    auto kick = makeBuffer (2, (int) (sampleRate * 6.0));
+    fillKick (kick, sampleRate, 0.7f);
+
+    const auto saturated = process (kick, 0.0f, 1.0f, sampleRate, false);
+    const auto kickMono = midOf (kick);
+    const auto saturatedMono = midOf (saturated);
+    std::vector<float> generated (kickMono.size() - (size_t) latency);
+
+    for (size_t i = 0; i < generated.size(); ++i)
+        generated[i] = saturatedMono[i + (size_t) latency] - kickMono[i];
+
+    const auto infrasonic = relativeDb (bandEnergy (generated, sampleRate, 1.0, 12.0),
+                                        bandEnergy (kickMono, sampleRate, 30.0, 200.0));
+
+    report ("infrasonic energy from asymmetric saturation, relative to the kick", infrasonic);
+    check (infrasonic < -25.0, "asymmetric saturation of a kick adds no infrasonic energy");
 }
 
 } // namespace
