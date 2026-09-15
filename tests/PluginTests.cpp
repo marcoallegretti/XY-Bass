@@ -230,7 +230,8 @@ void testProcessingContract()
     for (int i = latency; i < 512; ++i)
         worst = juce::jmax (worst, (double) std::abs (buffer.getSample (0, i) - reference.getSample (0, i - latency)));
 
-    check (worst < 1.0e-5, "bypass returns the input delayed by the reported latency");
+    report ("bypass difference from the delayed input (dB)", juce::Decibels::gainToDecibels (worst, -200.0));
+    check (juce::exactlyEqual (worst, 0.0), "bypass returns the input delayed by the reported latency, sample for sample");
 
     processor.releaseResources();
 }
@@ -400,7 +401,7 @@ void testVariableBlockSizes()
                                                           - source.getSample (0, i - latency)));
 
         report ("bypass alignment error, " + name, worst);
-        check (worst < 1.0e-5, "bypass returns the delayed input with " + name);
+        check (juce::exactlyEqual (worst, 0.0), "bypass returns the delayed input exactly with " + name);
     };
 
     checkBypassAlignment (uniform, "uniform blocks");

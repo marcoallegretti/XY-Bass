@@ -176,7 +176,14 @@ void XYBassProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
         engine.processBypassed (bypassBuffer, count);
         engine.process (view);
 
-        if (bypassRamp.isSmoothing() || bypassRamp.getCurrentValue() > 0.0f)
+        if (! bypassRamp.isSmoothing() && bypassRamp.getCurrentValue() >= 1.0f)
+        {
+            // Once the fade has finished, bypass is the delayed input itself rather than a blend
+            // that lands within rounding of it.
+            for (int channel = 0; channel < numChannels; ++channel)
+                view.copyFrom (channel, 0, bypassBuffer, channel, 0, count);
+        }
+        else if (bypassRamp.isSmoothing() || bypassRamp.getCurrentValue() > 0.0f)
         {
             for (int i = 0; i < count; ++i)
             {
