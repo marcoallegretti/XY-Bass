@@ -230,6 +230,50 @@ void renderSchedule (XYBassProcessor& processor, juce::AudioBuffer<float>& buffe
     }
 }
 
+void testPrepareUsesCurrentGains()
+{
+    section ("gains after preparing");
+
+    const auto sampleRate = 48000.0;
+    constexpr int blockSize = 256;
+    const auto length = (int) sampleRate * 2;
+
+    XYBassProcessor processor;
+    processor.setPlayConfigDetails (2, 2, sampleRate, blockSize);
+
+    auto* output = processor.getValueTreeState().getParameter (xyb::ids::output);
+    output->setValueNotifyingHost (output->convertTo0to1 (-18.0f));
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    juce::AudioBuffer<float> buffer (2, length);
+
+    for (int channel = 0; channel < 2; ++channel)
+        for (int i = 0; i < length; ++i)
+            buffer.setSample (channel, i, 0.1f * (float) std::sin (juce::MathConstants<double>::twoPi * 55.0 * i / sampleRate));
+
+    renderSchedule (processor, buffer, { blockSize });
+
+    auto peakBetween = [&] (int from, int to)
+    {
+        auto result = 0.0;
+
+        for (int i = from; i < to; ++i)
+            result = juce::jmax (result, (double) std::abs (buffer.getSample (0, i)));
+
+        return result;
+    };
+
+    const auto latency = processor.getLatencySamples();
+    const auto early = peakBetween (latency, latency + 1440);
+    const auto steady = peakBetween (length / 2, length);
+    const auto burst = 20.0 * std::log10 (juce::jmax (early, 1.0e-9) / juce::jmax (steady, 1.0e-9));
+
+    report ("peak in the first 30 ms over the settled peak with output at -18 dB (dB)", burst);
+    check (burst < 3.0, "a fresh prepare starts at the host's output gain");
+
+    processor.releaseResources();
+}
+
 void testVariableBlockSizes()
 {
     section ("variable host block sizes");
@@ -463,6 +507,7 @@ int runPluginTests()
     testPresetRecall();
     testProcessingContract();
     testVariableBlockSizes();
+    testPrepareUsesCurrentGains();
     testFactoryPresets();
     testEditorLifecycle();
 

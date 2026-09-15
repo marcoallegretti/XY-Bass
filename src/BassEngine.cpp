@@ -147,9 +147,9 @@ void BassEngine::reset()
     transientFast.reset();
     transientSlow.reset();
 
-    inputGain.snapTo (1.0f);
-    outputGain.snapTo (1.0f);
-    mixAmount.snapTo (parameters.mix);
+    inputGain.snapTo (juce::Decibels::decibelsToGain (parameters.inputGainDb));
+    outputGain.snapTo (juce::Decibels::decibelsToGain (parameters.outputGainDb));
+    mixAmount.snapTo (juce::jlimit (0.0f, 1.0f, parameters.mix));
     monoAmount.snapTo (0.4f);
     driveControl.snapTo (0.0f);
     asymmetryControl.snapTo (0.0f);

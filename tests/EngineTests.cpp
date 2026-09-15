@@ -2044,6 +2044,31 @@ void testStartupHasNoLevelBurst()
     report ("worst early peak over settled peak (dB)", worstBurst);
     check (worstBurst < 3.0, "the first hundred milliseconds stay near the settled level");
 
+    auto worstGainBurst = -1000.0;
+
+    for (const auto& [inputDb, outputDb] : { std::pair<float, float> { 0.0f, -18.0f }, { -18.0f, 0.0f }, { 12.0f, -12.0f } })
+    {
+        xyb::BassEngine engine;
+        auto parameters = parametersFor (corners[0]);
+        parameters.inputGainDb = inputDb;
+        parameters.outputGainDb = outputDb;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, 256, 2);
+
+        auto buffer = makeBuffer (2, 48000 * 3);
+        fillSine (buffer, 55.0, 48000.0, 0.1f);
+        render (engine, buffer, 256);
+
+        const auto latency = engine.getLatencySamples();
+        const auto early = peakBetween (buffer, latency, latency + 1440);
+        const auto steady = peakBetween (buffer, 96000, 144000);
+
+        worstGainBurst = juce::jmax (worstGainBurst, relativeDb (early, steady));
+    }
+
+    report ("worst peak in the first 30 ms with input or output gain set (dB)", worstGainBurst);
+    check (worstGainBurst < 3.0, "input and output gain apply from the first sample after preparing");
+
     auto lowest = 1000.0;
     auto highest = -1000.0;
 

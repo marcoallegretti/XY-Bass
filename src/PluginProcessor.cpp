@@ -82,6 +82,8 @@ void XYBassProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     const auto channels = juce::jmax (1, getTotalNumOutputChannels());
     const auto rate = sampleRate > 0.0 ? sampleRate : 44100.0;
 
+    // The engine starts its smoothers from the parameters it holds when it is prepared.
+    pullParameters();
     engine.prepare (rate, samplesPerBlock, channels);
     setLatencySamples (engine.getLatencySamples());
 
@@ -90,8 +92,6 @@ void XYBassProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     bypassRamp.reset (rate, 0.02);
     bypassRamp.setCurrentAndTargetValue (bypassParameter->get() ? 1.0f : 0.0f);
-
-    pullParameters();
 }
 
 void XYBassProcessor::releaseResources()
