@@ -1,6 +1,8 @@
 #include "PluginProcessor.h"
 #include "TestSuites.h"
 
+#include <juce_audio_formats/juce_audio_formats.h>
+
 #include <iostream>
 #include <tuple>
 #include <vector>
@@ -634,6 +636,156 @@ void testFactoryPresets()
            "the factory presets sit within a comparable loudness range");
 }
 
+
+// The press shots, rendered only when they are asked for, so a test run never writes files.
+juce::AudioBuffer<float> loadMaterial (const juce::String& path, double sampleRate, double seconds)
+{
+    juce::AudioBuffer<float> material (2, (int) (sampleRate * seconds));
+    material.clear();
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    const juce::File file (path);
+
+    if (file.existsAsFile())
+    {
+        auto reader = std::unique_ptr<juce::AudioFormatReader> (formats.createReaderFor (file));
+
+        if (reader != nullptr)
+        {
+            const auto ratio = reader->sampleRate / sampleRate;
+            const auto wanted = (int) std::ceil ((double) material.getNumSamples() * ratio);
+            const auto frames = (int) juce::jmin ((juce::int64) wanted, reader->lengthInSamples);
+
+            juce::AudioBuffer<float> read (2, frames);
+            reader->read (&read, 0, frames, 0, true, true);
+
+            for (int channel = 0; channel < 2; ++channel)
+            {
+                juce::LagrangeInterpolator interpolator;
+                interpolator.process (ratio, read.getReadPointer (channel), material.getWritePointer (channel),
+                                      juce::jmin (material.getNumSamples(), (int) ((double) frames / ratio)));
+            }
+
+            return material;
+        }
+    }
+
+    // A kick and a note, in case the recording is not there.
+    std::cout << "        no material at " << path << ", using a synthetic bass line" << std::endl;
+
+    const auto beat = (int) (sampleRate * 0.5);
+    double kickPhase = 0.0, notePhase = 0.0;
+
+    for (int i = 0; i < material.getNumSamples(); ++i)
+    {
+        const auto position = i % beat;
+        const auto into = (double) position / sampleRate;
+
+        if (position == 0)
+            kickPhase = 0.0;
+
+        kickPhase += juce::MathConstants<double>::twoPi * (48.0 + 120.0 * std::exp (-into * 32.0)) / sampleRate;
+        notePhase += juce::MathConstants<double>::twoPi * 55.0 / sampleRate;
+
+        const auto value = 0.5 * std::exp (-into * 12.0) * std::sin (kickPhase)
+                           + 0.25 * std::sin (notePhase);
+
+        for (int channel = 0; channel < 2; ++channel)
+            material.setSample (channel, i, (float) value);
+    }
+
+    return material;
+}
+
+int presetIndexFor (const juce::String& name)
+{
+    const auto& presets = xyb::getFactoryPresets();
+
+    for (int index = 0; index < (int) presets.size(); ++index)
+        if (name == presets[(size_t) index].name)
+            return index;
+
+    return 0;
+}
+
+bool writeShot (const juce::File& file, const juce::AudioBuffer<float>& material, const juce::String& preset,
+                bool delta, float scale)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 256;
+
+    XYBassProcessor processor;
+    processor.setPlayConfigDetails (2, 2, sampleRate, blockSize);
+    processor.setCurrentProgram (presetIndexFor (preset));
+    processor.getValueTreeState().getParameter (xyb::ids::delta)->setValueNotifyingHost (delta ? 1.0f : 0.0f);
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+
+    // The meters and the pad show what has just played, so the shot is taken after the audio.
+    for (int at = 0; at + blockSize <= material.getNumSamples(); at += blockSize)
+    {
+        for (int channel = 0; channel < 2; ++channel)
+            buffer.copyFrom (channel, 0, material, channel, at, blockSize);
+
+        processor.processBlock (buffer, midi);
+    }
+
+    // Keep playing until a note is under the tracker, so the readout has something to show.
+    for (int at = 0; at + blockSize <= material.getNumSamples() && at < (int) (sampleRate * 2.0); at += blockSize)
+    {
+        if (processor.getMeters().confidence.load() > 0.6f)
+            break;
+
+        for (int channel = 0; channel < 2; ++channel)
+            buffer.copyFrom (channel, 0, material, channel, at, blockSize);
+
+        processor.processBlock (buffer, midi);
+    }
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditorAndMakeActive());
+
+    if (editor == nullptr)
+        return false;
+
+    // The editor draws its chrome for the scale it believes it is at, so asking for twice the
+    // pixels means telling it so rather than enlarging the picture afterwards.
+    editor->setTransform (juce::AffineTransform::scale (scale));
+
+    // Its meters and the pad follow the engine on a timer, which has to be given time to settle.
+    for (int step = 0; step < 24; ++step)
+    {
+        juce::Thread::sleep (30);
+        juce::Timer::callPendingTimersSynchronously();
+    }
+
+    juce::Image target (juce::Image::ARGB, juce::roundToInt ((float) editor->getWidth() * scale),
+                        juce::roundToInt ((float) editor->getHeight() * scale), true, juce::SoftwareImageType());
+
+    {
+        juce::Graphics g (target);
+        g.addTransform (juce::AffineTransform::scale (scale));
+        editor->paintEntireComponent (g, true);
+    }
+
+    processor.editorBeingDeleted (editor.get());
+
+    const auto& meters = processor.getMeters();
+    std::cout << "        " << file.getFileName() << ": tracked " << meters.fundamental.load() << " Hz at confidence "
+              << meters.confidence.load() << ", output level " << meters.outputLevel.load() << std::endl;
+
+    file.deleteFile();
+    juce::FileOutputStream stream (file);
+
+    if (! stream.openedOk())
+        return false;
+
+    return juce::PNGImageFormat().writeImageToStream (target, stream);
+}
+
 } // namespace
 
 int runPluginTests()
@@ -657,4 +809,55 @@ int runPluginTests()
               << (checks - failures) << "/" << checks << " checks" << std::endl;
 
     return failures == 0 ? 0 : 1;
+}
+
+int writePressShots (const char* directory, const char* audioFile)
+{
+    juce::ScopedJuceInitialiser_GUI juceInitialiser;
+
+    const juce::File folder (juce::File::isAbsolutePath (directory)
+                                 ? juce::String (directory)
+                                 : juce::File::getCurrentWorkingDirectory().getChildFile (directory).getFullPathName());
+
+    if (! folder.createDirectory())
+    {
+        std::cerr << "Cannot write to " << folder.getFullPathName() << std::endl;
+        return 2;
+    }
+
+    const auto material = loadMaterial (audioFile, 48000.0, 6.0);
+
+    struct Shot
+    {
+        const char* file;
+        const char* preset;
+        bool delta;
+        float scale;
+    };
+
+    const Shot shots[] = { { "01-hero.png", "Balanced Bass", false, 1.0f },
+                           { "01-hero@2x.png", "Balanced Bass", false, 2.0f },
+                           { "02-club-sub.png", "Club Sub", false, 1.0f },
+                           { "03-phone-translation.png", "Phone Translation", false, 1.0f },
+                           { "04-gentle-mixbus.png", "Gentle Mixbus", false, 1.0f },
+                           { "05-delta.png", "Balanced Bass", true, 1.0f } };
+
+    auto written = 0;
+
+    for (const auto& shot : shots)
+    {
+        const auto file = folder.getChildFile (shot.file);
+
+        if (! writeShot (file, material, shot.preset, shot.delta, shot.scale))
+        {
+            std::cerr << "Could not write " << file.getFullPathName() << std::endl;
+            return 1;
+        }
+
+        ++written;
+        std::cout << "        wrote " << file.getFullPathName() << std::endl;
+    }
+
+    std::cout << written << " shots written to " << folder.getFullPathName() << std::endl;
+    return 0;
 }

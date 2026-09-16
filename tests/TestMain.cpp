@@ -16,6 +16,10 @@ int main (int argc, char* argv[])
                              { "material", runMaterialTests },
                              { "plugin", runPluginTests } };
 
+    // Rendering the interface is a separate job from the suites, and never part of a test run.
+    if (argc > 2 && std::strcmp (argv[1], "shots") == 0)
+        return writePressShots (argv[2], argc > 3 ? argv[3] : "");
+
     auto ran = 0;
     auto failed = 0;
 
